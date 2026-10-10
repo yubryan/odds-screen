@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: 22
       # Engine tests run here; the parity tests need tests/golden/ (real odds, kept local) and skip.
-      - run: node --test tests/web/
+      - run: node --test "tests/web/*.test.mjs"
 
   deploy:
     needs: test
