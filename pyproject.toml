@@ -1,0 +1,13 @@
+[project]
+name = "oddscreen"
+version = "0.1.0"
+description = "OddJam-style odds screen, +EV finder and middles for NFL/NBA/NCAAB"
+requires-python = ">=3.11"
+dependencies = ["fastapi", "uvicorn[standard]", "httpx", "python-dotenv", "numpy", "scipy"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]

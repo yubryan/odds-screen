@@ -1,0 +1,12 @@
+# secrets and local data (real odds, API key)
+.env
+/data/
+tests/golden/
+tests/mock/
+# environments
+.venv/
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
