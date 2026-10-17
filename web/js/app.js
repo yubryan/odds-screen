@@ -3,7 +3,10 @@
 // tests/web/parity.test.mjs. The UI talks to it through a local router that
 // answers the same /api/... requests the Python server used to.
 
-import { BOOK_COLORS, BOOK_TITLES, DEFAULT_BOOKS, REFERENCE_BOOK, refreshCost, withReference } from "./engine/config.js";
+import {
+  BOOK_COLORS, BOOK_TITLES, DEFAULT_BOOKS, MAIN_MARKETS, PREVIOUS_DEFAULT_BOOKS, PROP_MARKETS, REFERENCE_BOOK,
+  marketTitle, refreshCost, withReference,
+} from "./engine/config.js";
 import { Media } from "./engine/media.js";
 import { OddsAPIClient } from "./engine/oddsapi.js";
 import { HISTORY_DAYS, openBrowserStore } from "./engine/store.js";
@@ -17,7 +20,8 @@ const DEFAULTS = {
   sport: "nfl", tab: "ev", fmt: "american", books: null, kind: "all",
   method: "power", minEv: 0, kelly: 0.25, bankroll: 1000, minBooks: 3,
   market: "spreads", maxMiss: 5, maxHold: 5, stake: 100,
-  maxStakePct: 1, parlayView: "slip",
+  maxStakePct: 1, parlayView: "slip", showOpen: false,
+  pullMarkets: ["h2h", "spreads", "totals"], propPull: {},
   gen: { sports: ["nfl"], kind: "all", minLegs: 2, maxLegs: 4, minOdds: "", maxOdds: "", minLegEv: 0, boost: 0, sort: "ev", maxReuse: 3 },
 };
 const TABS = ["ev", "screen", "middles", "lowhold", "parlays", "settings"];
@@ -37,6 +41,11 @@ const config = (() => {
   const base = { apiKey: "", books: [...DEFAULT_BOOKS] };
   try { return { ...base, ...JSON.parse(localStorage.getItem(CONFIG_KEY) || "{}") }; } catch { return base; }
 })();
+// NoVig replaced BetOnline in the default books (2026-10-17): move devices still on the old default list
+if ([...config.books].sort().join() === [...PREVIOUS_DEFAULT_BOOKS].sort().join()) {
+  config.books = [...DEFAULT_BOOKS];
+  saveConfig();
+}
 function saveConfig() {
   try { localStorage.setItem(CONFIG_KEY, JSON.stringify(config)); } catch { /* storage unavailable */ }
 }
@@ -315,34 +324,104 @@ function needKey() {
   return true;
 }
 
-$("#refresh-main").addEventListener("click", async () => {
-  if (needKey()) return;
+$("#refresh-main").addEventListener("click", () => {
+  if (!needKey()) openPullSheet();
+});
+$("#credits").addEventListener("click", () => { location.hash = "settings"; });
+
+const ALL_BOOK_KEYS = Object.keys(BOOK_TITLES);
+const creditsLeft = () => meta.usage?.remaining ?? null;
+const pullMarkets = () => MAIN_MARKETS.filter((m) => state.pullMarkets.includes(m));
+const propMarkets = (sport = state.sport) => PROP_MARKETS[sport].filter((m) => (state.propPull[sport] ?? PROP_MARKETS[sport]).includes(m));
+
+/** Book checkboxes shared by the pull pickers and Settings; edits the saved fetch list. */
+function bookChecklist() {
+  const chosen = new Set(withReference(config.books));
+  return `<div class="book-grid">${ALL_BOOK_KEYS.map((b) => `<label class="check"><input type="checkbox" data-book="${b}" ${chosen.has(b) ? "checked" : ""} ${b === REFERENCE_BOOK ? "disabled" : ""}>
+    <span class="book"><i style="background:${BOOK_COLORS[b] ?? "#888"}"></i>${esc(BOOK_TITLES[b])}</span>${b === REFERENCE_BOOK ? `<span class="muted">fair price</span>` : ""}</label>`).join("")}</div>`;
+}
+async function toggleBook(key, on) {
+  const chosen = new Set(config.books);
+  if (on) chosen.add(key); else chosen.delete(key);
+  config.books = ALL_BOOK_KEYS.filter((b) => chosen.has(b));
+  saveConfig();
+  state.books = null; // the toolbar's book filter refers to the old list
+  saveSettings();
+  meta = await api("/api/meta");
+}
+const tierNote = (n) => `${n} book${n === 1 ? "" : "s"} = ${Math.ceil(n / 10)} billing group${n > 10 ? "s" : ""}. The Odds API bills up to 10 books as one group,
+  so leaving books out only saves credits when it takes you under a multiple of 10. Leaving out markets always saves.`;
+
+function openPullSheet() {
+  const sport = sportMeta();
+  const feeds = Math.round(sport.refresh_cost / meta.refresh_cost); // NBA: regular season + preseason
+  const draw = () => {
+    const markets = pullMarkets();
+    const books = withReference(config.books);
+    const perFeed = refreshCost(books, markets);
+    const left = creditsLeft();
+    $("#modal-title").textContent = `Pull main lines · ${sport.title}`;
+    $("#modal-body").innerHTML = `
+      <h4>Markets</h4>
+      <div class="chips">${MAIN_MARKETS.map((m) => `<button class="chip ${markets.includes(m) ? "on" : ""}" data-pull-market="${m}">${marketTitle(m)}</button>`).join("")}</div>
+      <p class="foot-note">Each market is 1 credit per billing group. Markets you skip keep showing their last pull.</p>
+      <h4>Books</h4>${bookChecklist()}
+      <p class="foot-note">${tierNote(books.length)} Books you leave out won't appear until you pull them again.</p>
+      <div class="plan-foot">
+        <span class="plan-cost"><b>${markets.length * Math.ceil(books.length / 10) * feeds > 0 ? `${perFeed}${feeds > 1 ? `–${perFeed * feeds}` : ""}` : 0}</b> credits${feeds > 1 ? " (one charge per feed with upcoming games: regular season and preseason)" : ""}${left != null ? ` · <b>${left}</b> left` : ""}</span>
+        <span style="display:flex;gap:8px"><button class="btn btn-ghost" id="pull-cancel">Cancel</button>
+          <button class="btn btn-primary" id="pull-go" ${markets.length ? "" : "disabled"}>Pull ${perFeed}${feeds > 1 ? "+" : ""} cr</button></span>
+      </div>`;
+  };
+  draw();
+  $("#modal-body").onclick = async (e) => {
+    const m = e.target.closest("[data-pull-market]");
+    if (m) {
+      const set_ = new Set(state.pullMarkets);
+      if (set_.has(m.dataset.pullMarket)) set_.delete(m.dataset.pullMarket); else set_.add(m.dataset.pullMarket);
+      state.pullMarkets = MAIN_MARKETS.filter((x) => set_.has(x));
+      saveSettings();
+      draw();
+      return;
+    }
+    if (e.target.id === "pull-cancel") $("#modal").close();
+    if (e.target.id === "pull-go") { $("#modal").close(); await pullMainLines(); }
+  };
+  $("#modal-body").onchange = async (e) => {
+    const b = e.target.closest("[data-book]");
+    if (b) { await toggleBook(b.dataset.book, b.checked); draw(); }
+  };
+  $("#modal").showModal();
+}
+
+async function pullMainLines() {
   const btn = $("#refresh-main");
   btn.disabled = true;
   btn.textContent = "Fetching…";
   try {
-    const r = await post(`/api/refresh/${state.sport}`);
+    const r = await post(`/api/refresh/${state.sport}`, { markets: pullMarkets() });
     const feeds = r.feeds?.length > 1 ? ` (${r.feeds.length} feeds incl. preseason)` : r.feeds?.[0]?.endsWith("_preseason") ? " (preseason)" : "";
-    toast(`${sportMeta().title} main lines: ${r.events} games${feeds} · ${r.cost} credits · ${r.usage.remaining} left`);
+    const which = r.markets?.length < MAIN_MARKETS.length ? ` · ${r.markets.map(marketTitle).join(", ")} only` : "";
+    toast(`${sportMeta().title} main lines: ${r.events} games${feeds}${which} · ${r.cost} credits · ${r.usage.remaining} left`);
   } catch (err) {
-    toast(err.message, true);
+    toast(/quota/i.test(err.message) ? `${err.message} — see Settings → Credits to upgrade.` : err.message, true);
   } finally {
     btn.disabled = false;
     await afterRefresh();
   }
-});
+}
 // keep the 14-day history trimmed as new snapshots arrive
 const pruneHistory = () => store?.prune(HISTORY_DAYS);
 
 async function pullProps(eventIds, btn) {
   if (btn) { btn.disabled = true; btn.textContent = "Pulling…"; }
   try {
-    const r = await post(`/api/props/refresh/${state.sport}`, { event_ids: eventIds });
+    const r = await post(`/api/props/refresh/${state.sport}`, { event_ids: eventIds, markets: propMarkets() });
     const none = r.games_without_props ? ` (${r.games_without_props} had no props posted yet)` : "";
     toast(`Props: ${r.games} game${r.games === 1 ? "" : "s"}${none} · ${r.cost} credits${r.usage ? ` · ${r.usage.remaining} left` : ""}${r.stopped ? ` · stopped early: ${r.stopped}` : ""}`, !!r.stopped);
     eventIds.forEach((id) => openProps.add(id));
   } catch (err) {
-    toast(err.message, true);
+    toast(/quota/i.test(err.message) ? `${err.message} — see Settings → Credits to upgrade.` : err.message, true);
   } finally {
     await afterRefresh();
   }
@@ -362,9 +441,13 @@ $("#refresh-props").addEventListener("click", async () => {
   const draw = () => {
     // books don't post preseason props through The Odds API (verified 2026-10-10), so don't pre-select them
     const inWindow = (e) => !e.preseason && new Date(e.commence_time) - Date.now() <= hours * 3600e3;
+    const pm = propMarkets();
+    plan.per_event_cost = refreshCost(withReference(config.books), pm);
     $("#modal-title").textContent = `Pull player props · ${sportMeta().title}`;
     $("#modal-body").innerHTML = `
-      <div class="callout">Each game costs up to <b>${plan.per_event_cost} credits</b>, one per prop market the books have posted. Games with no props posted yet cost 0. Main lines are not touched.</div>
+      <h4>Prop markets</h4>
+      <div class="chips" style="flex-wrap:wrap">${PROP_MARKETS[state.sport].map((m) => `<button class="chip ${pm.includes(m) ? "on" : ""}" data-prop-pull="${m}">${marketTitle(m)}</button>`).join("")}</div>
+      <div class="callout" style="margin-top:12px">Each game costs up to <b>${plan.per_event_cost} credit${plan.per_event_cost === 1 ? "" : "s"}</b>: one per chosen market the books have posted (per 10 books). Games with no props posted yet cost 0. Main lines are not touched.</div>
       ${plan.events.some((e) => e.preseason) ? `<div class="alert" style="margin-top:8px">Sportsbooks don't post player props for NBA preseason games, so those (tagged PRE) start unchecked. Regular-season props appear about a week or two before tip-off, often at one book first.</div>` : ""}
       <div style="display:flex;align-items:center;gap:10px;margin-top:14px"><span class="field">Games starting within</span>
         <div class="seg" id="plan-window">${windows.map(([label, h]) => {
@@ -386,12 +469,21 @@ $("#refresh-props").addEventListener("click", async () => {
     const n = selected().length;
     const remaining = meta.usage?.remaining;
     $("#plan-cost").innerHTML = `<b>${n}</b> game${n === 1 ? "" : "s"} · up to <b>${n * plan.per_event_cost}</b> credits${remaining != null ? ` · <b>${remaining}</b> left` : ""}`;
-    $("#plan-go").disabled = n === 0;
+    $("#plan-go").disabled = n === 0 || !propMarkets().length;
   };
   draw();
   $("#modal-body").onclick = async (e) => {
     const w = e.target.closest("#plan-window button");
     if (w) { hours = Number(w.dataset.h); draw(); return; }
+    const pmBtn = e.target.closest("[data-prop-pull]");
+    if (pmBtn) {
+      const cur = new Set(propMarkets());
+      if (cur.has(pmBtn.dataset.propPull)) cur.delete(pmBtn.dataset.propPull); else cur.add(pmBtn.dataset.propPull);
+      state.propPull = { ...state.propPull, [state.sport]: PROP_MARKETS[state.sport].filter((m) => cur.has(m)) };
+      saveSettings();
+      draw();
+      return;
+    }
     if (e.target.id === "plan-cancel") $("#modal").close();
     if (e.target.id === "plan-go") {
       const ids = selected();
@@ -426,7 +518,8 @@ function renderControls() {
   } else if (state.tab === "screen") {
     const markets = [...meta.markets, { key: "props", title: "Player Props" }];
     c.innerHTML = `<div class="seg" data-seg="market">${markets.map((m) =>
-      `<button data-val="${m.key}" class="${m.key === state.market ? "active" : ""}">${m.title}</button>`).join("")}</div>` + methodSelect();
+      `<button data-val="${m.key}" class="${m.key === state.market ? "active" : ""}">${m.title}</button>`).join("")}</div>` + methodSelect() +
+      `<button class="chip ${state.showOpen ? "on" : ""}" data-toggle-open>Opening odds</button>`;
   } else if (state.tab === "parlays") {
     c.innerHTML = `<div class="seg" data-seg="parlayView">${[["slip", "Slip analysis"], ["gen", "Generator"]].map(([k, l]) =>
       `<button data-val="${k}" class="${state.parlayView === k ? "active" : ""}">${l}</button>`).join("")}</div>` + methodSelect() +
@@ -446,6 +539,7 @@ $("#tab-controls").addEventListener("change", (e) => {
   set({ [key]: el.tagName === "SELECT" ? el.value : Number(el.value) }, SERVER_KEYS.has(key));
 });
 $("#tab-controls").addEventListener("click", (e) => {
+  if (e.target.closest("[data-toggle-open]")) { set({ showOpen: !state.showOpen }, false); renderControls(); return; }
   const b = e.target.closest("[data-seg] button");
   if (b) set({ [b.parentElement.dataset.seg]: b.dataset.val });
 });
@@ -568,6 +662,12 @@ function oddsCells(rows, books, market, spread, pick = null) {
     const fair = row.fair
       ? `<td class="oc fair-col" title="vig-free · ${esc(row.fair.source)}"><span class="pt">${point(row.fair.point, spread)}</span>${odds(row.fair.price)}</td>`
       : `<td class="oc fair-col empty">–</td>`;
+    // Opening line: the reference book's first recorded price, else the best book's, else any book's
+    const opener = [meta.reference, row.best_book, ...Object.keys(row.cells)]
+      .map((k) => k && row.cells[k] && row.cells[k].open_price != null ? [k, row.cells[k]] : null).find(Boolean);
+    const open = opener
+      ? `<td class="oc open-col" title="Opened at ${esc(bookMeta(opener[0]).title)} (first price this device recorded)"><span class="pt">${point(opener[1].open_point, spread)}</span>${odds(opener[1].open_price)}</td>`
+      : `<td class="oc open-col empty">–</td>`;
     const cells = books.map((b) => {
       const c = row.cells[b.key];
       if (!c) return `<td class="oc empty">–</td>`;
@@ -580,7 +680,9 @@ function oddsCells(rows, books, market, spread, pick = null) {
       }
       const tip = c.open_price != null ? `Opened ${point(c.open_point, spread)} ${odds(c.open_price)}` : "";
       const cls = b.reference ? "ref" : row.best_book === b.key ? "best" : "";
-      const inner = `<span class="pt">${point(c.point, spread)}</span>${odds(c.price)}${mv}`;
+      const openSub = state.showOpen && c.open_price != null
+        ? `<span class="open-sub ${c.open_price !== c.price || c.open_point !== c.point ? "moved" : ""}">o ${point(c.open_point, spread)} ${odds(c.open_price)}</span>` : "";
+      const inner = `<span class="pt">${point(c.point, spread)}</span>${odds(c.price)}${mv}${openSub}`;
       if (b.reference || !pick) return `<td class="oc ${cls}" title="${esc(tip)}">${inner}</td>`;
       const { spec, info } = pick(row);
       const leg = { ...spec, point: c.point };
@@ -589,7 +691,7 @@ function oddsCells(rows, books, market, spread, pick = null) {
       const hint = `${picked ? "In your parlay. Click to remove" : `Add to parlay at ${b.title}`}${tip ? ` · ${tip}` : ""}`;
       return `<td class="oc pickable ${cls} ${picked ? "picked" : ""}" ${pickAttr(leg, info, b.key, c.price)} title="${esc(hint)}">${inner}${link}</td>`;
     }).join("");
-    return { fair, cells };
+    return { fair, open, cells };
   });
 }
 
@@ -615,7 +717,7 @@ function renderScreen(data) {
       const label = state.market === "totals"
         ? `<div class="bet"><span class="ou-badge">${row.side === "Over" ? "O" : "U"}</span><b>${esc(row.side)}</b></div>`
         : `<div class="bet">${teamLogo(row.side, "lg")}<b>${esc(isMobile() ? teamShort(row.side) : row.side)}</b></div>`;
-      return `<tr><td class="side-cell">${label}</td>${built[i].fair}${built[i].cells}</tr>`;
+      return `<tr><td class="side-cell">${label}</td>${built[i].fair}${built[i].open}${built[i].cells}</tr>`;
     }).join("");
     return `<div class="card">
       <div class="event-head">
@@ -623,10 +725,10 @@ function renderScreen(data) {
           <div><div class="names">${esc(ev.away)} @ ${esc(ev.home)}${preTag(ev)}</div><span class="sub">${kickoff(ev.commence_time)}</span></div></div>
         <div class="event-actions"><button class="btn btn-sm btn-ghost" data-history="${esc(ev.id)}" data-name="${esc(ev.name)}" data-market="${state.market}">Line history</button></div>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>${esc(meta.markets.find((m) => m.key === state.market).title)}</th><th class="num fair-col">Fair</th>${bookHeaders(books)}</tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>${esc(meta.markets.find((m) => m.key === state.market).title)}</th><th class="num fair-col">Fair</th><th class="num open-col">Open</th>${bookHeaders(books)}</tr></thead><tbody>${rows}</tbody></table></div>
     </div>`;
   }).join("")}</div>
-  <p class="foot-note">Click any price to add that exact bet to your parlay (↗ opens the sportsbook). Green marks the best line and price among your books. ▲▼ show movement since the previous refresh. Hover a cell to see where it opened. ${esc(bookMeta(meta.reference).title)} is shown for reference only.</p>`;
+  <p class="foot-note">Click any price to add that exact bet to your parlay (↗ opens the sportsbook). Green marks the best line and price among your books. ▲▼ show movement since the previous refresh. Open is the first line this device recorded (${esc(bookMeta(meta.reference).title)} when it posts one); turn on Opening odds in the filters to see every book's opener. ${esc(bookMeta(meta.reference).title)} is shown for reference only.</p>`;
 }
 
 // ---- Odds Screen (player props) ----------------------------------------------------
@@ -674,15 +776,15 @@ function renderPropBody(ev, data) {
             · <a href="#" data-history="${esc(ev.id)}" data-name="${esc(pl.player)}" data-market="${esc(sel)}" data-desc="${esc(pl.player)}">history</a></span></div></div></td>`
         : "";
       if (isMobile()) {
-        const head = i === 0 ? `<tr class="player-head"><td colspan="${books.length + 2}"><div class="bet">${avatar(ev.id, pl.player, true)}<b>${esc(pl.player)}</b>
+        const head = i === 0 ? `<tr class="player-head"><td colspan="${books.length + 3}"><div class="bet">${avatar(ev.id, pl.player, true)}<b>${esc(pl.player)}</b>
           <span class="muted">${pl.n_books} books · <a href="#" data-history="${esc(ev.id)}" data-name="${esc(pl.player)}" data-market="${esc(sel)}" data-desc="${esc(pl.player)}">history</a></span></div></td></tr>` : "";
-        return `${head}<tr class="player-group ${i === 1 ? "last" : ""}"><td class="side-cell muted">${row.side}</td>${built[i].fair}${built[i].cells}</tr>`;
+        return `${head}<tr class="player-group ${i === 1 ? "last" : ""}"><td class="side-cell muted">${row.side}</td>${built[i].fair}${built[i].open}${built[i].cells}</tr>`;
       }
-      return `<tr class="player-group ${i === 1 ? "last" : ""}">${who}<td class="muted" style="width:60px">${row.side}</td>${built[i].fair}${built[i].cells}</tr>`;
+      return `<tr class="player-group ${i === 1 ? "last" : ""}">${who}<td class="muted" style="width:60px">${row.side}</td>${built[i].fair}${built[i].open}${built[i].cells}</tr>`;
     }).join("");
   }).join("");
-  const head = isMobile() ? `<tr><th class="side-cell"></th><th class="num fair-col">Fair</th>${bookHeaders(books)}</tr>`
-    : `<tr><th>Player</th><th></th><th class="num fair-col">Fair</th>${bookHeaders(books)}</tr>`;
+  const head = isMobile() ? `<tr><th class="side-cell"></th><th class="num fair-col">Fair</th><th class="num open-col">Open</th>${bookHeaders(books)}</tr>`
+    : `<tr><th>Player</th><th></th><th class="num fair-col">Fair</th><th class="num open-col">Open</th>${bookHeaders(books)}</tr>`;
   return seg + `<div class="table-wrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
 }
 
@@ -1380,6 +1482,14 @@ function renderSettings() {
   return `<div class="settings">
     ${config.apiKey ? "" : `<div class="card welcome"><h2>Welcome to Odds Screen</h2><p>Everything runs on this device: odds come straight from The Odds API and your history stays here. Add your API key to start.</p></div>`}
     <section class="card set-card"><h3>Odds API</h3>${keyForm()}</section>
+    <section class="card set-card" id="credits-card"><h3>Credits</h3>
+      <p>${meta.usage ? `<b>${meta.usage.remaining}</b> left · ${meta.usage.used} used this period (as of ${new Date(meta.usage.at).toLocaleString()}).` : "Pull odds or tap Check credits to see your balance."}
+        Free keys get 500 a month.</p>
+      <div class="row-actions">
+        <a class="btn btn-primary" href="https://the-odds-api.com/#get-access" target="_blank" rel="noopener">See plans ↗</a>
+        <a class="btn" href="https://dash.the-odds-api.com/" target="_blank" rel="noopener">Upgrade in your account ↗</a>
+      </div>
+      <p class="foot-note">Paid plans: 20K credits for $30/mo, 100K for $59/mo. Your API key stays the same when you upgrade, and the new credits are available right away.</p></section>
     <section class="card set-card"><h3>Books to fetch</h3>
       <p class="foot-note">${fetchBooks.length} books selected. A main-lines refresh costs <b>${perRefresh} credits</b> per sport feed. Up to 10 books bill as one region; every extra 10 adds the same again.</p>
       <div class="book-grid">${books}</div></section>

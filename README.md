@@ -9,11 +9,12 @@ An OddJam-style betting toolkit for NFL, NBA (including preseason) and NCAAB. It
 ## What's in it
 
 - **Positive EV:** book prices that beat the fair price. The fair price is Pinnacle's price with the vig removed, or an average of other books when Pinnacle doesn't post that line.
-- **Odds Screen:** every book's line and price for main lines and player props, with movement arrows, opening lines and line history. Tap any price to add that exact bet to a parlay.
+- **Odds Screen:** every book's line and price for main lines and player props, with movement arrows, line history, an **Open** column (the first line this device recorded, Pinnacle's when available) and an optional opener under each book's price. Tap any price to add that exact bet to a parlay.
 - **Middles and Low Hold:** gaps between books on spreads, totals and props, and the lowest combined margin across books.
 - **Parlays:** a slip priced at the book you choose, with each book's parlay odds compared. For same-game parlays it models how the legs move together (a Gaussian copula), shows the correlation needed to break even against a book's quote, and shows what each leg adds or costs. Also covers profit boosts, Kelly sizing and a parlay generator.
 - **Credit guards:**
-  - Main lines and props refresh separately.
+  - Main lines and props refresh separately. Each pull lets you choose its markets and books, and shows the cost first. Leaving out markets always saves credits; leaving out books only saves when it takes you under a multiple of 10, because The Odds API bills books in groups of 10.
+  - A partial pull only replaces the markets it fetched. The rest keep showing their last pull.
   - Before paying, the app checks the free schedule endpoint, so a sport with no upcoming games costs nothing.
   - It won't start a refresh your remaining credits can't cover.
   - A multi-game props pull stops early when credits run low and keeps what it already pulled.

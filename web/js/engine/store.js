@@ -123,20 +123,36 @@ export class Store {
     return null;
   }
 
-  /** Fetches making up the current view (offset 0) or the one before it (offset 1):
-   * the Nth-latest main fetch plus the Nth-latest props fetch per event. */
-  snapshotFetchIds(sport, offset = 0) {
+  /** What makes up the current view (offset 0) or the one before it (offset 1):
+   * for each main market, the Nth-latest main fetch that pulled it (so a
+   * spreads-only pull doesn't hide the moneylines and totals from the last
+   * full pull), plus the Nth-latest props fetch per event.
+   * Returns Map<fetchId, Set<market> | null (= every row)>. */
+  snapshotSelection(sport, offset = 0) {
     const seen = new Map();
-    const out = [];
+    const out = new Map();
     for (let i = this.fetches.length - 1; i >= 0; i--) {
       const f = this.fetches[i];
       if (f.sport !== sport) continue;
-      const scope = `${f.kind}\u0000${f.event_id ?? ""}`;
-      const n = seen.get(scope) ?? 0;
-      if (n === offset) out.push(f.id);
-      seen.set(scope, n + 1);
+      const scopes = f.kind === "main" ? f.markets.split(",").filter(Boolean).map((m) => ["main", m]) : [[f.kind, f.event_id ?? ""]];
+      for (const [kind, sub] of scopes) {
+        const scope = `${kind}\u0000${sub}`;
+        const n = seen.get(scope) ?? 0;
+        if (n === offset) {
+          if (kind !== "main") out.set(f.id, null);
+          else {
+            if (!out.has(f.id)) out.set(f.id, new Set());
+            out.get(f.id).add(sub);
+          }
+        }
+        seen.set(scope, n + 1);
+      }
     }
     return out;
+  }
+
+  snapshotFetchIds(sport, offset = 0) {
+    return [...this.snapshotSelection(sport, offset).keys()];
   }
 
   /** event_id -> time of its latest props fetch. */
@@ -150,14 +166,19 @@ export class Store {
     return out;
   }
 
-  /** Price objects for these fetches, in insertion order, with the fetch time attached. */
-  pricesFor(fetchIds) {
-    const ids = [...fetchIds].sort((a, b) => a - b);
+  /** Price objects for a selection (fetch ids, or Map<id, Set<market>|null>), in
+   * insertion order, with the fetch time attached. */
+  pricesFor(selection) {
+    const sel = selection instanceof Map ? selection : new Map([...selection].map((id) => [id, null]));
+    const ids = [...sel.keys()].sort((a, b) => a - b);
     const byId = new Map(this.fetches.map((f) => [f.id, f]));
     const out = [];
     for (const id of ids) {
       const at = byId.get(id)?.fetched_at ?? null;
-      for (const r of this.pricesByFetch.get(id) ?? []) out.push({ ...r, fetched_at: at });
+      const markets = sel.get(id);
+      for (const r of this.pricesByFetch.get(id) ?? []) {
+        if (!markets || markets.has(r.market)) out.push({ ...r, fetched_at: at });
+      }
     }
     return out;
   }
@@ -173,7 +194,7 @@ export class Store {
 
   /** Current view of a sport: {fetch (latest main), events Map, prices}. */
   snapshot(sport) {
-    const prices = this.pricesFor(this.snapshotFetchIds(sport));
+    const prices = this.pricesFor(this.snapshotSelection(sport));
     const events = this.eventsFor(new Set(prices.map((p) => p.event_id)));
     return { fetch: this.latestFetch(sport), events, prices };
   }
@@ -181,7 +202,7 @@ export class Store {
   /** Prices from the snapshot before the current one (for movement arrows). */
   previousPrices(sport) {
     const out = new Map();
-    for (const p of this.pricesFor(this.snapshotFetchIds(sport, 1))) out.set(priceKey(p), p);
+    for (const p of this.pricesFor(this.snapshotSelection(sport, 1))) out.set(priceKey(p), p);
     return out;
   }
 

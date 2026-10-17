@@ -89,16 +89,18 @@ export class LocalApi {
     // ---- refreshes (the only routes that spend credits) ----
     if (method === "POST" && (m = p.match(/^\/api\/refresh\/(\w+)$/))) {
       const sport = this.sport(m[1]);
-      return this.guarded(() => refreshSport(this.store, this.client(), sport, this.books()));
+      return this.guarded(() => refreshSport(this.store, this.client(), sport, this.books(), body?.markets ?? MAIN_MARKETS));
     }
     if (method === "GET" && p === "/api/props/plan") {
       const sport = this.sport(q.sport);
-      return this.guarded(() => propsPlan(this.client(), sport, this.books(), q.hours ? Number(q.hours) : null));
+      const markets = q.markets ? q.markets.split(",") : PROP_MARKETS[sport];
+      return this.guarded(() => propsPlan(this.client(), sport, this.books(), q.hours ? Number(q.hours) : null, markets));
     }
     if (method === "POST" && (m = p.match(/^\/api\/props\/refresh\/(\w+)$/))) {
       const sport = this.sport(m[1]);
       if (!body?.event_ids?.length) throw new ApiError(400, "no games selected");
-      return this.guarded(() => refreshProps(this.store, this.client(), sport, body.event_ids, this.books()));
+      return this.guarded(() => refreshProps(this.store, this.client(), sport, body.event_ids, this.books(),
+        { markets: body.markets ?? PROP_MARKETS[sport] }));
     }
 
     // ---- tools (local snapshot only) ----

@@ -94,10 +94,11 @@ BOOK_TITLES = {
 }
 
 # Every 10 named bookmakers bill as one "region", so 10 books = cheapest tier.
-# Caesars (williamhill_us) and Fanatics returned no NFL odds as of 2026-10-05.
+# Caesars (williamhill_us) and Fanatics returned no NFL odds as of 2026-10-05
+# (Caesars still none on 2026-10-17). NoVig (a US exchange) replaced BetOnline then.
 _DEFAULT_BOOKS = (
     "pinnacle,draftkings,fanduel,betmgm,betrivers,"
-    "espnbet,hardrockbet,ballybet,betparx,betonlineag"
+    "espnbet,hardrockbet,ballybet,betparx,novig"
 )
 BOOKS: list[str] = [b.strip() for b in os.getenv("ODDS_BOOKS", _DEFAULT_BOOKS).split(",") if b.strip()]
 if REFERENCE_BOOK not in BOOKS:
@@ -116,6 +117,7 @@ BOOK_COLORS = {
     "ballybet": "#ef4b5f",
     "betparx": "#8e5fd9",
     "betonlineag": "#d84a3a",
+    "novig": "#22c3a6",
 }
 
 

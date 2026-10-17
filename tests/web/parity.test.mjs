@@ -13,7 +13,7 @@ import { buildPropScreen, buildScreen, propsSummary } from "../../web/js/engine/
 import { Store } from "../../web/js/engine/store.js";
 
 const GOLDEN = new URL("../golden/", import.meta.url);
-const BETTABLE = new Set(DEFAULT_BOOKS.filter((b) => b !== REFERENCE_BOOK));
+let BETTABLE = new Set(DEFAULT_BOOKS.filter((b) => b !== REFERENCE_BOOK)); // replaced by each golden file's own set
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
 const MONEY = new Set(["stake", "to_win"]);
 
@@ -61,6 +61,7 @@ for (const sport of ["nfl", "nba"]) {
   const skip = !existsSync(file) && "golden file missing: run tools/make_golden.py";
   const g = skip ? null : JSON.parse(readFileSync(file, "utf8"));
   const setup = () => {
+    BETTABLE = new Set(g.bettable);
     const store = new Store().load(g.rows);
     const now = new Date(g.now);
     const snap = store.snapshot(sport);

@@ -149,3 +149,45 @@ test("bundled media covers every team in the snapshots and scopes players to the
   assert.ok(hit?.headshot?.startsWith("https://a.espncdn.com/i/headshots/nfl/"));
   assert.equal(hit.team, "DAL");
 });
+
+test("pulling a subset of markets costs less and keeps the other markets from the last full pull", async () => {
+  const store = new Store();
+  const ev = (price) => ({
+    id: "g1", commence_time: FUTURE, home_team: "A", away_team: "B", bookmakers: [{ key: "draftkings", markets: [
+      { key: "h2h", outcomes: [{ name: "A", price }, { name: "B", price: 2 }] },
+      { key: "spreads", outcomes: [{ name: "A", price, point: -3 }, { name: "B", price: 1.9, point: 3 }] },
+    ] }],
+  });
+  const client = {
+    calls: [],
+    async events() { return [{ id: "g1", commence_time: FUTURE }]; },
+    async odds(key, markets, books) {
+      this.calls.push(markets);
+      const e = ev(markets.length === 3 ? 1.8 : 1.7);
+      e.bookmakers[0].markets = e.bookmakers[0].markets.filter((m) => markets.includes(m.key));
+      return { data: [e], usage: usage(400, markets.length) };
+    },
+  };
+  let r = await refreshSport(store, client, "nfl", DEFAULT_BOOKS);
+  assert.equal(r.cost, 3);
+  r = await refreshSport(store, client, "nfl", DEFAULT_BOOKS, ["spreads"]);
+  assert.equal(r.cost, 1);
+  assert.deepEqual(client.calls, [["h2h", "spreads", "totals"], ["spreads"]]);
+  const { prices } = store.snapshot("nfl");
+  const price = (m) => prices.find((p) => p.market === m && p.outcome === "A").price;
+  assert.equal(price("spreads"), 1.7); // fresh from the spreads-only pull
+  assert.equal(price("h2h"), 1.8); // kept from the full pull
+  assert.equal(store.previousPrices("nfl").get(JSON.stringify(["g1", "draftkings", "spreads", "A", ""])).price, 1.8);
+  await assert.rejects(refreshSport(store, client, "nfl", DEFAULT_BOOKS, []), /at least one market/);
+});
+
+test("props pulls can be limited to some markets", async () => {
+  const store = new Store();
+  const client = new FakeClient({ basketball_nba: ["g1"], basketball_nba_preseason: [] });
+  const seen = [];
+  client.eventOdds = async (key, id, markets) => { seen.push(markets); return { data: { id, commence_time: FUTURE, home_team: "A", away_team: "B", bookmakers: [] }, usage: usage(400, 0) }; };
+  await refreshProps(store, client, "nba", ["g1"], DEFAULT_BOOKS, { markets: ["player_points", "bogus"] });
+  assert.deepEqual(seen, [["player_points"]]);
+  const plan = await propsPlan(client, "nba", DEFAULT_BOOKS, null, ["player_points", "player_rebounds"]);
+  assert.equal(plan.per_event_cost, 2);
+});

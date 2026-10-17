@@ -77,8 +77,14 @@ export const BOOK_TITLES = {
 };
 
 // Every 10 named bookmakers bill as one "region", so 10 books = cheapest tier.
-// Caesars (williamhill_us) and Fanatics returned no NFL odds as of 2026-10-05.
+// Caesars (williamhill_us) and Fanatics returned no NFL odds as of 2026-10-05
+// (Caesars still none on 2026-10-17). NoVig (a US exchange) replaced BetOnline then.
 export const DEFAULT_BOOKS = [
+  "pinnacle", "draftkings", "fanduel", "betmgm", "betrivers",
+  "espnbet", "hardrockbet", "ballybet", "betparx", "novig",
+];
+/** The default before NoVig: devices still on exactly this list get migrated. */
+export const PREVIOUS_DEFAULT_BOOKS = [
   "pinnacle", "draftkings", "fanduel", "betmgm", "betrivers",
   "espnbet", "hardrockbet", "ballybet", "betparx", "betonlineag",
 ];
@@ -95,6 +101,7 @@ export const BOOK_COLORS = {
   ballybet: "#ef4b5f",
   betparx: "#8e5fd9",
   betonlineag: "#d84a3a",
+  novig: "#22c3a6",
 };
 
 export const bookTitle = (key) => BOOK_TITLES[key] ?? key;

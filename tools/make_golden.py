@@ -62,7 +62,8 @@ def build(sport: str, last_id: int, now_iso: str) -> dict:
     now = parse_time(now_iso)
     fetch, evs, prs = store.snapshot(sport)
     previous = store.previous_prices(sport)
-    out: dict = {"now": now_iso, "rows": {"fetches": fetches, "events": events, "prices": prices}, "cases": {}}
+    out: dict = {"now": now_iso, "bettable": sorted(BETTABLE),
+                 "rows": {"fetches": fetches, "events": events, "prices": prices}, "cases": {}}
     cases = out["cases"]
 
     def kind(ps, k):
