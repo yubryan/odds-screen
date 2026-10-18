@@ -1,7 +1,8 @@
-// Service worker: makes the app installable and instant. App files are served
-// from cache and refreshed in the background (stale-while-revalidate), so a new
-// deploy shows up on the next launch. Odds API calls always go to the network.
-const CACHE = "oddscreen-v1";
+// Service worker: makes the app installable and usable offline. App files are
+// fetched from the network first (revalidated, so a new deploy shows up on the
+// next load) and fall back to the cached copy only when offline. Odds API
+// calls, ESPN images and fonts are left to the browser.
+const CACHE = "oddscreen-v2";
 const SHELL = [
   "./", "index.html", "manifest.webmanifest", "css/style.css", "data/media.json",
   "js/app.js", "js/router.js",
@@ -12,7 +13,7 @@ const SHELL = [
 ];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: "reload" })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (e) => {
@@ -22,13 +23,16 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== "GET" || url.origin !== location.origin) return; // odds API, ESPN images, fonts: network as usual
-  e.respondWith(caches.open(CACHE).then(async (cache) => {
-    const cached = await cache.match(e.request, { ignoreSearch: true });
-    const fresh = fetch(e.request).then((res) => {
+  if (e.request.method !== "GET" || url.origin !== location.origin) return;
+  e.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    try {
+      // "no-cache" revalidates with the server (cheap 304 when unchanged) instead of trusting the HTTP cache
+      const res = await fetch(e.request, { cache: "no-cache" });
       if (res.ok) cache.put(e.request, res.clone());
       return res;
-    }).catch(() => cached);
-    return cached || fresh;
-  }));
+    } catch {
+      return (await cache.match(e.request, { ignoreSearch: true })) || Response.error();
+    }
+  })());
 });

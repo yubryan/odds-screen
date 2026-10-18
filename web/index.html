@@ -105,7 +105,15 @@
   <script type="module" src="js/app.js"></script>
   <script>
     if ("serviceWorker" in navigator && location.protocol === "https:") {
-      navigator.serviceWorker.register("sw.js").catch((e) => console.warn("service worker", e));
+      const hadController = !!navigator.serviceWorker.controller;
+      let reloaded = false;
+      // a new version took over: reload once so the page runs the new files
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (hadController && !reloaded) { reloaded = true; location.reload(); }
+      });
+      navigator.serviceWorker.register("sw.js", { updateViaCache: "none" })
+        .then((reg) => reg.update())
+        .catch((e) => console.warn("service worker", e));
     }
   </script>
 </body>

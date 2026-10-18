@@ -282,9 +282,26 @@ $("#fmt").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-fmt]");
   if (b) set({ fmt: b.dataset.fmt }, false);
 });
+// Place the books dropdown under its button but always inside the screen: the
+// toolbar wraps on narrower windows, which can put the button at either edge.
+function placePopover() {
+  const pop = $("#books-pop");
+  const btn = $("#books-btn").getBoundingClientRect();
+  const vw = document.documentElement.clientWidth, vh = window.innerHeight, margin = 8;
+  const width = Math.min(260, vw - 2 * margin);
+  pop.style.width = `${width}px`;
+  pop.style.left = `${Math.min(Math.max(btn.right - width, margin), vw - width - margin)}px`;
+  pop.style.top = `${btn.bottom + 6}px`;
+  pop.style.maxHeight = `${Math.max(160, vh - btn.bottom - 6 - margin)}px`;
+}
+const closePopover = () => { $("#books-pop").hidden = true; };
+window.addEventListener("resize", closePopover);
+window.addEventListener("scroll", closePopover, { passive: true });
+
 $("#books-btn").addEventListener("click", () => {
   const pop = $("#books-pop");
   pop.hidden = !pop.hidden;
+  if (!pop.hidden) placePopover();
   if (!pop.hidden) renderBooksPopover();
 });
 document.addEventListener("click", (e) => {
