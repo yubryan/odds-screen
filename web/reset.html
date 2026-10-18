@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Updating Odds Screen</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0b0d12; color: #e8ebf1;
+           font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-align: center; padding: 24px; }
+    p { max-width: 420px; color: #a4acbb; }
+    b { color: #e8ebf1; }
+  </style>
+</head>
+<body>
+  <div>
+    <b id="title">Updating Odds Screen…</b>
+    <p id="msg">Clearing the saved app files. Your API key, settings and odds history are kept.</p>
+  </div>
+  <script>
+    // Clears the offline cache (service worker + Cache Storage) only. localStorage
+    // (API key, settings, slip) and IndexedDB (odds history) are left alone.
+    (async () => {
+      try {
+        if ("serviceWorker" in navigator) {
+          for (const reg of await navigator.serviceWorker.getRegistrations()) await reg.unregister();
+        }
+        if ("caches" in window) {
+          for (const key of await caches.keys()) await caches.delete(key);
+        }
+        document.getElementById("title").textContent = "Done";
+        document.getElementById("msg").textContent = "Opening the latest version…";
+      } catch (e) {
+        document.getElementById("msg").textContent = "Couldn't clear everything (" + e.message + "). Opening the app anyway…";
+      }
+      setTimeout(() => location.replace("./?fresh=" + Date.now()), 600);
+    })();
+  </script>
+</body>
+</html>

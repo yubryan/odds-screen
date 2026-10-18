@@ -1520,6 +1520,10 @@ function renderSettings() {
       <p>${stats.fetches} snapshots · ${stats.prices.toLocaleString()} prices · ${stats.events} games. Snapshots older than ${HISTORY_DAYS} days are deleted automatically.</p>
       <div class="row-actions"><button class="btn" data-action="clear-history">Clear odds history</button></div>
       <p class="foot-note">Team logos and rosters come from an ESPN snapshot dated ${esc(built)}.</p></section>
+    <section class="card set-card"><h3>App version</h3>
+      <p>Updates normally load on their own. If something looks out of date, this clears the saved app files and reloads.
+        Your API key, settings and odds history are kept.</p>
+      <div class="row-actions"><a class="btn" href="reset.html">Update to latest version</a></div></section>
   </div>`;
 }
 
