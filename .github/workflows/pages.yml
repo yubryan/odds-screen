@@ -34,6 +34,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # Version every asset URL (stylesheet, scripts and their imports) and the
+      # service worker cache, so a browser can never mix files from two deploys.
+      - name: Stamp asset versions
+        run: |
+          V="${GITHUB_SHA::8}"
+          sed -i "s#css/style.css#css/style.css?v=$V#; s#js/app.js#js/app.js?v=$V#" web/index.html
+          find web/js -name '*.js' -exec sed -i -E "s#(from \"\./[^\"]+\.js)\"#\1?v=$V\"#g" {} +
+          sed -i "s#oddscreen-v2#oddscreen-$V#" web/sw.js
+          grep -c "?v=$V" web/index.html web/js/app.js web/js/router.js
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web
