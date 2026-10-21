@@ -20,7 +20,7 @@ const DEFAULTS = {
   sport: "nfl", tab: "ev", fmt: "american", books: null, kind: "all",
   method: "power", minEv: 0, kelly: 0.25, bankroll: 1000, minBooks: 3,
   market: "spreads", maxMiss: 5, maxHold: 5, stake: 100,
-  maxStakePct: 1, parlayView: "slip", showOpen: false,
+  maxStakePct: 1, parlayView: "slip", showOpen: false, evWindow: "all",
   pullMarkets: ["h2h", "spreads", "totals"], propPull: {},
   gen: { sports: ["nfl"], kind: "all", minLegs: 2, maxLegs: 4, minOdds: "", maxOdds: "", minLegEv: 0, boost: 0, sort: "ev", maxReuse: 3 },
 };
@@ -169,10 +169,15 @@ function matchupCell(r, sport = state.sport) {
   </div>`;
 }
 
+// a player's name/photo opens every prop for that game on the Odds Screen
+const propLink = (r, inner) =>
+  `<button class="prop-link" data-show-props="${esc(r.event_id)}" data-player="${esc(r.player)}" data-market="${esc(r.market)}"
+    title="See all props for ${esc(teamShort(r.away))} @ ${esc(teamShort(r.home))}">${inner}</button>`;
+
 function betCell(r) {
   if (r.is_prop) {
-    return `<div class="bet">${avatar(r.event_id, r.player)}<div><b>${esc(r.player)}</b>
-      <span class="sub">${esc(r.outcome)} ${esc(point(r.point, false))} · ${esc(r.market_title)}</span></div></div>`;
+    return `<div class="bet">${propLink(r, `${avatar(r.event_id, r.player)}<div><b>${esc(r.player)} <span class="go">›</span></b>
+      <span class="sub">${esc(r.outcome)} ${esc(point(r.point, false))} · ${esc(r.market_title)}</span></div>`)}</div>`;
   }
   const team = r.outcome === r.home || r.outcome === r.away;
   const icon = team ? teamLogo(r.outcome, "lg") : `<span class="ou-badge">${r.outcome === "Over" ? "O" : "U"}</span>`;
@@ -265,6 +270,7 @@ $("#sports").addEventListener("click", async (e) => {
   const b = e.target.closest("button[data-sport]");
   if (!b) return;
   state.sport = b.dataset.sport;
+  evGames = null;
   saveSettings();
   if (!media[state.sport]) await loadMedia();
   load();
@@ -284,9 +290,8 @@ $("#fmt").addEventListener("click", (e) => {
 });
 // Place the books dropdown under its button but always inside the screen: the
 // toolbar wraps on narrower windows, which can put the button at either edge.
-function placePopover() {
-  const pop = $("#books-pop");
-  const btn = $("#books-btn").getBoundingClientRect();
+function placePopover(pop = $("#books-pop"), anchor = $("#books-btn")) {
+  const btn = anchor.getBoundingClientRect();
   const vw = document.documentElement.clientWidth, vh = window.innerHeight, margin = 8;
   const width = Math.min(260, vw - 2 * margin);
   pop.style.width = `${width}px`;
@@ -294,7 +299,7 @@ function placePopover() {
   pop.style.top = `${btn.bottom + 6}px`;
   pop.style.maxHeight = `${Math.max(160, vh - btn.bottom - 6 - margin)}px`;
 }
-const closePopover = () => { $("#books-pop").hidden = true; };
+const closePopover = () => { $("#books-pop").hidden = true; $("#games-pop").hidden = true; };
 window.addEventListener("resize", closePopover);
 window.addEventListener("scroll", closePopover, { passive: true });
 
@@ -306,6 +311,36 @@ $("#books-btn").addEventListener("click", () => {
 });
 document.addEventListener("click", (e) => {
   if (!e.target.closest(".popover-wrap")) $("#books-pop").hidden = true;
+  if (!e.target.closest("#games-pop, #games-btn")) $("#games-pop").hidden = true;
+});
+document.body.insertAdjacentHTML("beforeend", `<div id="games-pop" class="popover" hidden></div>`);
+function setEvGames(next) {
+  evGames = next;
+  renderContent();
+  updateCounts();
+}
+$("#games-pop").addEventListener("change", () => {
+  const checked = [...document.querySelectorAll("#games-pop input:checked")].map((i) => i.value);
+  const all = evGameList(lastData?.rows ?? []).length;
+  setEvGames(checked.length === all ? null : new Set(checked));
+  $("#games-pop").hidden = false; // keep it open while picking
+  placePopover($("#games-pop"), $("#games-btn"));
+});
+document.addEventListener("click", (e) => {
+  const g = e.target.closest("[data-games]");
+  if (g) {
+    setEvGames(g.dataset.games === "all" ? null : new Set());
+    if (g.closest("#games-pop")) { renderGamesPopover(); $("#games-pop").hidden = false; placePopover($("#games-pop"), $("#games-btn")); }
+    return;
+  }
+  if (e.target.closest("#games-btn")) {
+    const pop = $("#games-pop");
+    pop.hidden = !pop.hidden;
+    if (!pop.hidden) { renderGamesPopover(); placePopover(pop, $("#games-btn")); }
+    return;
+  }
+  const w = e.target.closest("[data-ev-window]");
+  if (w) { state.evWindow = w.dataset.evWindow; saveSettings(); renderContent(); updateCounts(); }
 });
 $("#books-pop").addEventListener("change", () => {
   const checked = [...document.querySelectorAll("#books-pop input:checked")].map((i) => i.value);
@@ -602,7 +637,8 @@ async function load() {
 function updateCounts() {
   document.querySelectorAll("[data-count]").forEach((el) => {
     if (el.dataset.count !== state.tab || !lastData?.rows) return;
-    const rows = state.tab === "middles" ? lastData.rows.filter((r) => -r.miss_pct * 100 <= state.maxMiss) : lastData.rows;
+    const rows = state.tab === "middles" ? lastData.rows.filter((r) => -r.miss_pct * 100 <= state.maxMiss)
+      : state.tab === "ev" ? evFiltered(lastData.rows) : lastData.rows;
     el.textContent = rows ? rows.length : "";
   });
 }
@@ -627,17 +663,64 @@ function renderContent() {
   addReg.clear();
   $("#content").innerHTML = render(data);
   ensurePropBodies();
+  applyPropFocus();
 }
 
 // ---- Positive EV ---------------------------------------------------------------
 
+// ---- EV filters: when the game starts, and which games ----
+const EV_WINDOWS = [["all", "All", Infinity], ["24h", "24h", 24], ["3d", "3 days", 72], ["7d", "7 days", 168]];
+let evGames = null; // Set of event ids, or null for every game
+
+function inWindow(r, key = state.evWindow) {
+  const hours = (EV_WINDOWS.find(([k]) => k === key) ?? EV_WINDOWS[0])[2];
+  return new Date(r.commence_time) - Date.now() <= hours * 3600e3;
+}
+const evFiltered = (rows) => rows.filter((r) => inWindow(r) && (!evGames || evGames.has(r.event_id)));
+
+/** Games in the EV list, soonest first, with how many bets each has in the current window. */
+function evGameList(rows) {
+  const games = new Map();
+  for (const r of rows) {
+    if (!games.has(r.event_id)) games.set(r.event_id, { ...r, n: 0 });
+    if (inWindow(r)) games.get(r.event_id).n += 1;
+  }
+  return [...games.values()].sort((a, b) => a.commence_time.localeCompare(b.commence_time));
+}
+
+function evFilterBar(rows) {
+  const games = evGameList(rows);
+  const label = !evGames ? "All games" : evGames.size === 1 ? `${teamShort(games.find((g) => evGames.has(g.event_id))?.away ?? "")} @ ${teamShort(games.find((g) => evGames.has(g.event_id))?.home ?? "")}` : `${evGames.size} games`;
+  return `<div class="ev-filters">
+    <div class="seg">${EV_WINDOWS.map(([k, l]) => {
+      const n = rows.filter((r) => inWindow(r, k) && (!evGames || evGames.has(r.event_id))).length;
+      return `<button data-ev-window="${k}" class="${state.evWindow === k ? "active" : ""}">${l} <span class="muted">${n}</span></button>`;
+    }).join("")}</div>
+    <button class="btn btn-ghost ${evGames ? "filtered" : ""}" id="games-btn">${esc(label)} ▾</button>
+    ${evGames ? `<button class="btn btn-sm btn-ghost" data-games="all">Clear</button>` : ""}
+  </div>`;
+}
+
+function renderGamesPopover() {
+  const games = evGameList(lastData?.rows ?? []);
+  $("#games-pop").innerHTML =
+    `<div class="pop-actions"><button class="btn btn-sm" data-games="all">All games</button><button class="btn btn-sm btn-ghost" data-games="none">Clear</button></div>` +
+    games.map((g) => `<label class="game-opt ${g.n ? "" : "muted"}"><input type="checkbox" value="${esc(g.event_id)}" ${!evGames || evGames.has(g.event_id) ? "checked" : ""}>
+      <span class="logo-pair">${teamLogo(g.away)}${teamLogo(g.home)}</span>
+      <span class="g-name">${esc(teamShort(g.away))} @ ${esc(teamShort(g.home))}${preTag(g)}<span class="sub">${kickoff(g.commence_time)}</span></span>
+      <span class="g-n">${g.n}</span></label>`).join("") +
+    `<p class="note">Number = +EV bets in the selected time window.</p>`;
+}
+
 function renderEV(data) {
-  const rows = data.rows;
-  if (!rows.length) return emptyState("No +EV bets right now", `Nothing at or above ${state.minEv}% EV in the latest snapshot. Lines move, so try again after a refresh.`);
+  if (!data.rows.length) return emptyState("No +EV bets right now", `Nothing at or above ${state.minEv}% EV in the latest snapshot. Lines move, so try again after a refresh.`);
+  const bar = evFilterBar(data.rows);
+  const rows = evFiltered(data.rows);
+  if (!rows.length) return bar + emptyState("No +EV bets match these filters", "Try a longer time window or pick more games.");
   const best = Math.max(...rows.map((r) => r.ev));
   const avg = rows.reduce((a, r) => a + r.ev, 0) / rows.length;
   const stake = rows.reduce((a, r) => a + r.stake, 0);
-  const kpis = `<div class="kpis">
+  const kpis = bar + `<div class="kpis">
     <div class="kpi"><div class="label">Opportunities</div><div class="value">${rows.length}</div></div>
     <div class="kpi"><div class="label">Best EV</div><div class="value pos">${pct(best, 2)}</div></div>
     <div class="kpi"><div class="label">Average EV</div><div class="value">${pct(avg, 2)}</div></div>
@@ -652,6 +735,7 @@ function renderEV(data) {
     { key: "selection", label: "Bet", html: betCell },
     { key: "book", label: "Book", html: (r) => bookCell(r.book, r.link), value: (r) => bookMeta(r.book).title },
     { key: "price", label: "Odds", num: true, html: (r) => `<span class="price">${odds(r.price)}</span>` },
+    { key: "open_price", label: "Open", num: true, html: openCell },
     { key: "fair_prob", label: "Fair", num: true, html: (r) => `${odds(r.fair_price)}<span class="sub">${pct(r.fair_prob)}</span>` },
     { key: "fair_source", label: "Fair from", html: (r) => r.fair_source === "consensus"
         ? `<span class="tag">Consensus · ${r.fair_books}</span>` : `<span class="tag">${esc(bookMeta(r.fair_source).title)} ${r.ref_price ? odds(r.ref_price) : ""}</span>` },
@@ -659,10 +743,28 @@ function renderEV(data) {
     { key: "stake", label: "Stake", num: true, html: (r) => `${money(r.stake)}<span class="sub">${pct(r.kelly, 2)} of bankroll</span>` },
     { key: "age_min", label: "Age", num: true, html: (r) => (r.age_min == null ? "–" : `${Math.max(0, Math.round(r.age_min))}m`) },
   ];
-  if (isMobile()) return kpis + `<div class="m-list">${rows.map(evCard).join("")}</div>` +
-    `<p class="foot-note">EV is measured against the vig-free price. Re-check the price on the book before betting.</p>`;
-  return kpis + table("ev", cols, rows, { key: "ev", asc: false }) +
-    `<p class="foot-note">EV is measured against the vig-free price. Age is how old the book's price was when it was pulled. Re-check the price on the book before betting.</p>`;
+  const note = `EV is measured against the vig-free price. Open is where this book's price for the bet started (the first price this device recorded); ▲ means it has moved in your favor since. Tap a player to see all of that game's props.`;
+  if (isMobile()) return kpis + `<div class="m-list">${rows.map(evCard).join("")}</div><p class="foot-note">${note}</p>`;
+  return kpis + table("ev", cols, rows, { key: "ev", asc: false }) + `<p class="foot-note">${note} Age is how old the book's price was when it was pulled.</p>`;
+}
+
+/** The bet's opening line/price at this book, with ▲/▼ for movement in the bettor's favor since. */
+function openMove(r) {
+  if (r.open_price == null) return null;
+  const now = favorability(r.market, r.outcome, r.point), was = favorability(r.market, r.outcome, r.open_point);
+  if (now === was && r.price === r.open_price) return { cls: "same", arrow: "" };
+  const up = now !== was ? now > was : r.price > r.open_price;
+  return { cls: up ? "up" : "down", arrow: up ? "▲" : "▼" };
+}
+function openText(r) {
+  const spread = r.market.includes("spreads");
+  const pt = r.open_point != null && (r.market.includes("spreads") || r.market.includes("totals") || r.is_prop) ? `${point(r.open_point, spread)} ` : "";
+  return `${pt}${odds(r.open_price)}`;
+}
+function openCell(r) {
+  const m = openMove(r);
+  if (!m) return `<span class="muted">–</span>`;
+  return `<span class="open-val">${openText(r)}</span>${m.arrow ? `<span class="mv ${m.cls}">${m.arrow}</span>` : ""}`;
 }
 
 // ---- Odds Screen (main lines) ---------------------------------------------------------
@@ -793,11 +895,11 @@ function renderPropBody(ev, data) {
             · <a href="#" data-history="${esc(ev.id)}" data-name="${esc(pl.player)}" data-market="${esc(sel)}" data-desc="${esc(pl.player)}">history</a></span></div></div></td>`
         : "";
       if (isMobile()) {
-        const head = i === 0 ? `<tr class="player-head"><td colspan="${books.length + 3}"><div class="bet">${avatar(ev.id, pl.player, true)}<b>${esc(pl.player)}</b>
+        const head = i === 0 ? `<tr class="player-head" data-player="${esc(pl.player)}"><td colspan="${books.length + 3}"><div class="bet">${avatar(ev.id, pl.player, true)}<b>${esc(pl.player)}</b>
           <span class="muted">${pl.n_books} books · <a href="#" data-history="${esc(ev.id)}" data-name="${esc(pl.player)}" data-market="${esc(sel)}" data-desc="${esc(pl.player)}">history</a></span></div></td></tr>` : "";
-        return `${head}<tr class="player-group ${i === 1 ? "last" : ""}"><td class="side-cell muted">${row.side}</td>${built[i].fair}${built[i].open}${built[i].cells}</tr>`;
+        return `${head}<tr class="player-group ${i === 1 ? "last" : ""}" data-player="${esc(pl.player)}"><td class="side-cell muted">${row.side}</td>${built[i].fair}${built[i].open}${built[i].cells}</tr>`;
       }
-      return `<tr class="player-group ${i === 1 ? "last" : ""}">${who}<td class="muted" style="width:60px">${row.side}</td>${built[i].fair}${built[i].open}${built[i].cells}</tr>`;
+      return `<tr class="player-group ${i === 1 ? "last" : ""}" data-player="${esc(pl.player)}">${who}<td class="muted" style="width:60px">${row.side}</td>${built[i].fair}${built[i].open}${built[i].cells}</tr>`;
     }).join("");
   }).join("");
   const head = isMobile() ? `<tr><th class="side-cell"></th><th class="num fair-col">Fair</th><th class="num open-col">Open</th>${bookHeaders(books)}</tr>`
@@ -814,6 +916,33 @@ async function loadPropBody(eventId) {
   }
   renderContent();
 }
+
+let focusProp = null; // {eventId, player}: scroll to this player once the game's props render
+
+function showGameProps(eventId, player, market) {
+  openProps.add(eventId);
+  propMarket[eventId] = market;
+  focusProp = { eventId, player };
+  state.market = "props";
+  saveSettings();
+  if (state.tab === "screen") load(); else location.hash = "screen";
+}
+
+function applyPropFocus() {
+  if (!focusProp) return;
+  const body = document.getElementById(`prop-body-${focusProp.eventId}`);
+  if (!body || !propData[focusProp.eventId]) return;
+  const rows = [...body.querySelectorAll("tr[data-player]")].filter((tr) => tr.dataset.player === focusProp.player);
+  const card = body.closest(".card");
+  (rows[0] ?? card)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  rows.forEach((tr) => { tr.classList.add("flash"); setTimeout(() => tr.classList.remove("flash"), 2400); });
+  focusProp = null;
+}
+
+document.addEventListener("click", (e) => {
+  const sp = e.target.closest("[data-show-props]");
+  if (sp) { e.preventDefault(); showGameProps(sp.dataset.showProps, sp.dataset.player, sp.dataset.market); }
+});
 
 $("#content").addEventListener("click", async (e) => {
   const pull = e.target.closest("button[data-pull]");
@@ -852,7 +981,7 @@ function legsCell(r, withStake) {
     `<div><span class="price">${odds(l.price)}</span> <b>${esc(l.selection)}</b> ${bookCell(l.book, l.link)}${withStake ? `<span class="muted">${money(l.stake)}</span>` : ""}</div>`).join("")}</div>`;
 }
 function subjectCell(r) {
-  if (r.is_prop) return `<div class="bet">${avatar(r.event_id, r.player, true)}<div><b>${esc(r.player)}</b><span class="sub">${esc(r.market_title)}</span></div></div>`;
+  if (r.is_prop) return `<div class="bet">${propLink(r, `${avatar(r.event_id, r.player, true)}<div><b>${esc(r.player)} <span class="go">›</span></b><span class="sub">${esc(r.market_title)}</span></div>`)}</div>`;
   return `<span class="tag">${esc(r.market_title)}</span>`;
 }
 
@@ -1408,8 +1537,8 @@ function evCard(r) {
     <div class="m-sub">${matchupInline(r)}</div>
     <div class="m-stats">
       <div><span>Odds</span><b class="price">${odds(r.price)}</b></div>
-      <div><span>Fair</span><b>${odds(r.fair_price)}</b></div>
-      <div><span>Win</span><b>${pct(r.fair_prob)}</b></div>
+      <div><span>Open</span><b>${openCell(r)}</b></div>
+      <div><span>Fair · ${pct(r.fair_prob, 0)}</span><b>${odds(r.fair_price)}</b></div>
       <div><span>Stake</span><b>${money(r.stake)}</b></div>
     </div>
     <div class="m-foot">${bookCell(r.book, r.link)}<span class="muted m-note">fair: ${esc(source)}${r.age_min != null ? ` · ${Math.max(0, Math.round(r.age_min))}m old` : ""}${warn}</span>

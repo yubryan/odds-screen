@@ -532,3 +532,24 @@ a.btn:not(.btn-primary) { color: var(--text); }
 #modal-body .chips { flex-wrap: wrap; }
 #modal-body .plan-foot { position: sticky; bottom: -16px; margin: 12px -18px -16px; padding: 12px 18px calc(12px + env(safe-area-inset-bottom));
   background: var(--surface); border-top: 1px solid var(--border); flex-wrap: wrap; }
+
+/* EV filters */
+.ev-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; }
+.ev-filters .seg { max-width: 100%; overflow-x: auto; }
+#games-btn.filtered { border-color: var(--accent); color: var(--accent); }
+.game-opt { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.game-opt:hover { background: var(--surface-2); }
+.game-opt .g-name { flex: 1; min-width: 0; }
+.game-opt .g-n { font-family: var(--mono); font-size: 12px; color: var(--pos); }
+.game-opt.muted .g-n { color: var(--text-3); }
+
+/* tap a prop to see the whole game's props */
+.prop-link { display: flex; align-items: center; gap: 10px; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; color: inherit; font: inherit; }
+.prop-link:hover b { color: var(--accent); }
+.prop-link .go { color: var(--accent); font-weight: 700; }
+tr.flash td { animation: flash 2.4s ease-out; }
+@keyframes flash { 0%, 35% { background: var(--accent-soft); } 100% { background: transparent; } }
+
+/* opening line on EV rows */
+.open-val { font-family: var(--mono); }
+.mv.same { display: none; }

@@ -13,6 +13,7 @@ import { OddsAPIClient, OddsAPIError } from "./engine/oddsapi.js";
 import { ParlayError, analyze, generate, pairKey, priceLegs } from "./engine/parlay.js";
 import { buildPropScreen, buildScreen, propsSummary } from "./engine/screen.js";
 import { RefreshRefused, propsPlan, refreshProps, refreshSport } from "./engine/service.js";
+import { priceKey } from "./engine/store.js";
 
 export class ApiError extends Error {
   constructor(status, detail) {
@@ -110,6 +111,14 @@ export class LocalApi {
         bettable: this.bettable(q.books), reference: REFERENCE_BOOK, method: this.method(q.method),
         minEv: num(q.min_ev, 0), minBooks: num(q.min_books, 3), kellyMult: num(q.kelly, 0.25), bankroll: num(q.bankroll, 1000), now,
       });
+      // where this book's price for this exact bet opened (first price this device recorded)
+      const opening = this.store.openingPrices([...new Set(rows.map((r) => r.event_id))], [...new Set(rows.map((r) => r.market))]);
+      for (const r of rows) {
+        const o = opening.get(priceKey({ event_id: r.event_id, book: r.book, market: r.market, outcome: r.outcome, description: r.player }));
+        r.open_price = o ? o.price : null;
+        r.open_point = o ? o.point ?? null : null;
+        r.open_at = o ? o.fetched_at : null;
+      }
       return { fetch, has_data: prices.length > 0, rows };
     }
     if (method === "GET" && p === "/api/screen") {
