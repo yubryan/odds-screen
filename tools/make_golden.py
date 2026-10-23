@@ -109,7 +109,7 @@ def build(sport: str, last_id: int, now_iso: str) -> dict:
         by_event.setdefault(r["event_id"], r)
     cross = [r for r in by_event.values()][:3]
     spec = lambda r: {"sport": sport, "event_id": r["event_id"], "market": r["market"], "outcome": r["outcome"],  # noqa: E731
-                      "point": r["point"], "description": r["player"]}
+                      "point": r["point"], "description": r["player"], "book": r["book"]}
     same_game = []
     for eid in by_event:
         legs = [r for r in ev_rows if r["event_id"] == eid]

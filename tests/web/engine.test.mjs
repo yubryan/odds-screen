@@ -191,3 +191,24 @@ test("props pulls can be limited to some markets", async () => {
   const plan = await propsPlan(client, "nba", DEFAULT_BOOKS, null, ["player_points", "player_rebounds"]);
   assert.equal(plan.per_event_cost, 2);
 });
+
+test("consensus counts books that share a feed once and leaves a book out of its own fair price", async () => {
+  const { fairForLine } = await import("../../web/js/engine/fair.js");
+  const { devig } = await import("../../web/js/engine/odds_math.js");
+  const line = (books) => new Map(Object.entries(books).map(([b, [o, u]]) => [b, new Map([
+    ["Over", { book: b, outcome: "Over", price: o, point: 45.5 }], ["Under", { book: b, outcome: "Under", price: u, point: 45.5 }]])]));
+  const shared = fairForLine(line({ ballybet: [2.10, 1.75], betparx: [2.10, 1.75], draftkings: [1.91, 1.91], fanduel: [1.95, 1.87] }),
+    { method: "multiplicative", reference: "pinnacle", minBooks: 3 });
+  const expect = [[2.10, 1.75], [1.91, 1.91], [1.95, 1.87]].reduce((a, d) => a + devig(d, "multiplicative")[0], 0) / 3;
+  assert.equal(shared.n_books, 3);
+  assert.ok(Math.abs(shared.probs.get("Over") - expect) < 1e-12);
+
+  const books = line({ draftkings: [2.30, 1.60], fanduel: [1.91, 1.91], betmgm: [1.93, 1.89], espnbet: [1.90, 1.92] });
+  const withDk = fairForLine(books, { method: "power", reference: "pinnacle", minBooks: 3 });
+  const without = fairForLine(books, { method: "power", reference: "pinnacle", minBooks: 3, exclude: "draftkings" });
+  assert.equal(withDk.n_books, 4);
+  assert.equal(without.n_books, 3);
+  assert.ok(without.probs.get("Over") > withDk.probs.get("Over"));
+  const small = line({ draftkings: [1.91, 1.91], fanduel: [1.95, 1.87], betmgm: [1.93, 1.89] });
+  assert.equal(fairForLine(small, { method: "power", reference: "pinnacle", minBooks: 3, exclude: "fanduel" }), null);
+});

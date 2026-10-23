@@ -46,6 +46,7 @@ class LegSpec:
     outcome: str
     point: float | None = None
     description: str | None = None
+    book: str | None = None  # where the leg was picked; left out of its own consensus fair price
 
     @property
     def id(self) -> str:
@@ -115,11 +116,13 @@ def price_legs(
         if event is None:
             raise ParlayError(f"{s.outcome} ({s.market}) is no longer in the latest snapshot")
         books = grouped[s.sport].get(LineKey(s.event_id, s.market, s.description, s.line(event)), {})
-        fair = fair_for_line(books, method=method, reference=reference, min_books=min_books) if books else None
+        fair = fair_for_line(books, method=method, reference=reference, min_books=min_books, exclude=s.book) if books else None
         thin = False
         if fair is None and books:
-            # A hand-picked line that few books post: de-vig whatever books do post it, flagged as rough.
-            fair = fair_for_line(books, method=method, reference=reference, min_books=1)
+            # A hand-picked line that few books post: de-vig whatever other books post it (or, if
+            # it's the only one, the picked book itself), flagged as rough.
+            fair = (fair_for_line(books, method=method, reference=reference, min_books=1, exclude=s.book)
+                    or fair_for_line(books, method=method, reference=reference, min_books=1))
             thin = fair is not None
         prices = {b: outs[s.outcome] for b, outs in books.items() if s.outcome in outs}
         alternates: dict[str, Price] = {}
@@ -400,17 +403,17 @@ def generate(
             event = events[key.event_id]
             if not is_upcoming(event, now):
                 continue
-            fair = fair_for_line(books, method=method, reference=reference, min_books=min_books)
-            if fair is None:
-                continue
             for book, outcomes in books.items():
                 if book == reference or book not in bettable:
+                    continue
+                fair = fair_for_line(books, method=method, reference=reference, min_books=min_books, exclude=book)
+                if fair is None:
                     continue
                 for outcome, price in outcomes.items():
                     prob = fair.probs[outcome]
                     if prob * price.price - 1 < min_leg_ev:
                         continue
-                    spec = LegSpec(sport, event.id, key.market, outcome, price.point, key.description)
+                    spec = LegSpec(sport, event.id, key.market, outcome, price.point, key.description, book)
                     pools[book].append(_Cand(spec, event, price, prob, prob * price.price - 1))
 
     def score(m: dict) -> float:
@@ -465,7 +468,7 @@ def _cand_dict(c: _Cand) -> dict:
     return {
         "id": s.id,
         "spec": {"sport": s.sport, "event_id": s.event_id, "market": s.market, "outcome": s.outcome,
-                 "point": s.point, "description": s.description},
+                 "point": s.point, "description": s.description, "book": s.book},
         "label": selection_label(c.price),
         "event_id": e.id, "event": e.name, "home": e.home, "away": e.away,
         "commence_time": e.commence_time.isoformat(), "preseason": is_preseason(e.league),

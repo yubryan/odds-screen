@@ -16,11 +16,12 @@ export function findEv(events, prices, {
   for (const { key, books } of groupPrices(events, prices).values()) {
     const event = events.get(key.event_id);
     if (!isUpcoming(event, now)) continue;
-    const fair = fairForLine(books, { method, reference, minBooks });
-    if (!fair) continue;
     const refPrices = books.get(reference) ?? new Map();
     for (const [book, outcomes] of books) {
       if (book === reference || !bettable.has(book)) continue;
+      // each book is measured against a fair price it isn't part of
+      const fair = fairForLine(books, { method, reference, minBooks, exclude: book });
+      if (!fair) continue;
       for (const [outcome, p] of outcomes) {
         const prob = fair.probs.get(outcome);
         const ev = expectedValue(prob, p.price);

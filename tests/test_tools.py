@@ -31,9 +31,14 @@ def test_ev_uses_pinnacle_and_finds_bills_ml(snap):
 def test_ev_falls_back_to_consensus_off_pinnacle_line(snap):
     events, prices = snap
     rows = find_ev(events, prices, bettable=BETTABLE, reference="pinnacle", method="power",
-                   min_ev=-1, min_books=2, now=NOW)
-    spread_35 = [r for r in rows if r["selection"] == "Bills +3.5"]
-    assert spread_35 and all(r["fair_source"] == "consensus" and r["fair_books"] == 2 for r in spread_35)
+                   min_ev=-1, min_books=1, now=NOW)
+    # +3.5 is posted by DK and MGM only: each is priced against the other, never itself
+    spread_35 = {r["book"]: r for r in rows if r["selection"] == "Bills +3.5"}
+    assert set(spread_35) == {"draftkings", "betmgm"}
+    assert all(r["fair_source"] == "consensus" and r["fair_books"] == 1 for r in spread_35.values())
+    assert not find_ev(events, prices, bettable=BETTABLE, reference="pinnacle", method="power", min_ev=-1,
+                       min_books=2, now=NOW) or not [r for r in find_ev(events, prices, bettable=BETTABLE,
+                       reference="pinnacle", method="power", min_ev=-1, min_books=2, now=NOW) if r["selection"] == "Bills +3.5"]
     # only DK posts total 47 -> below min_books, no row
     assert not [r for r in rows if r["selection"] == "Over 47"]
 

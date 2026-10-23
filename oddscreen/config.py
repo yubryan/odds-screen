@@ -121,6 +121,16 @@ BOOK_COLORS = {
 }
 
 
+# Books that post from the same odds feed. In the stored snapshots Bally Bet and
+# betPARX quoted identical two-sided prices on 97.7% of 1,092 shared markets
+# (2026-10-22), so a consensus counts them as one source.
+FEEDS = {"ballybet": "ballybet+betparx", "betparx": "ballybet+betparx"}
+
+
+def feed_of(book: str) -> str:
+    return FEEDS.get(book, book)
+
+
 def book_title(key: str) -> str:
     return BOOK_TITLES.get(key, key)
 

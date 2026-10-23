@@ -80,11 +80,13 @@ export function priceLegs(specs, snapshots, { method, reference, minBooks }) {
     const event = snapshots.get(s.sport)?.events.get(s.event_id);
     if (!event) throw new ParlayError(`${s.outcome} (${s.market}) is no longer in the latest snapshot`);
     const books = grouped.get(s.sport).get(lineKeyString(s.event_id, s.market, s.description, specLine(s, event)))?.books ?? new Map();
-    let fair = books.size ? fairForLine(books, { method, reference, minBooks }) : null;
+    const exclude = s.book ?? null; // where the leg was picked: left out of its own consensus
+    let fair = books.size ? fairForLine(books, { method, reference, minBooks, exclude }) : null;
     let thin = false;
     if (!fair && books.size) {
-      // A hand-picked line that few books post: de-vig whatever books do post it, flagged as rough.
-      fair = fairForLine(books, { method, reference, minBooks: 1 });
+      // A hand-picked line that few books post: de-vig whatever other books post it (or, if
+      // it's the only one, the picked book itself), flagged as rough.
+      fair = fairForLine(books, { method, reference, minBooks: 1, exclude }) ?? fairForLine(books, { method, reference, minBooks: 1 });
       thin = fair != null;
     }
     const prices = new Map();
@@ -332,14 +334,14 @@ export function generate(snapshots, {
     for (const { key, books } of groupPrices(snap.events, prices).values()) {
       const event = snap.events.get(key.event_id);
       if (!isUpcoming(event, now)) continue;
-      const fair = fairForLine(books, { method, reference, minBooks });
-      if (!fair) continue;
       for (const [bk, outcomes] of books) {
         if (bk === reference || !bettable.has(bk)) continue;
+        const fair = fairForLine(books, { method, reference, minBooks, exclude: bk });
+        if (!fair) continue;
         for (const [outcome, price] of outcomes) {
           const prob = fair.probs.get(outcome);
           if (prob * price.price - 1 < minLegEv) continue;
-          const spec = { sport, event_id: event.id, market: key.market, outcome, point: price.point ?? null, description: key.description };
+          const spec = { sport, event_id: event.id, market: key.market, outcome, point: price.point ?? null, description: key.description, book: bk };
           if (!pools.has(bk)) pools.set(bk, []);
           pools.get(bk).push({ spec, event, price, p: prob, ev: prob * price.price - 1 });
         }
@@ -394,7 +396,7 @@ function candDict(c) {
   const s = c.spec, e = c.event;
   return {
     id: legId(s),
-    spec: specOut(s),
+    spec: { ...specOut(s), book: s.book ?? null },
     label: selectionLabel(c.price),
     event_id: e.id, event: eventName(e), home: e.home, away: e.away,
     commence_time: isoformat(e.commence_time), preseason: isPreseason(e.league),

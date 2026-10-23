@@ -31,12 +31,13 @@ def find_ev(
         event = events[key.event_id]
         if not is_upcoming(event, now):
             continue
-        fair = fair_for_line(books, method=method, reference=reference, min_books=min_books)
-        if fair is None:
-            continue
         ref_prices = books.get(reference, {})
         for book, outcomes in books.items():
             if book == reference or book not in bettable:
+                continue
+            # each book is measured against a fair price it isn't part of
+            fair = fair_for_line(books, method=method, reference=reference, min_books=min_books, exclude=book)
+            if fair is None:
                 continue
             for outcome, p in outcomes.items():
                 prob = fair.probs[outcome]

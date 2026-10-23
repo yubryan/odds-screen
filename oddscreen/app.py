@@ -223,6 +223,7 @@ class LegIn(BaseModel):
     outcome: str
     point: float | None = None
     description: str | None = None
+    book: str | None = None
 
 
 class CorrIn(BaseModel):

@@ -738,12 +738,13 @@ function renderEV(data) {
     { key: "open_price", label: "Open", num: true, html: openCell },
     { key: "fair_prob", label: "Fair", num: true, html: (r) => `${odds(r.fair_price)}<span class="sub">${pct(r.fair_prob)}</span>` },
     { key: "fair_source", label: "Fair from", html: (r) => r.fair_source === "consensus"
-        ? `<span class="tag">Consensus · ${r.fair_books}</span>` : `<span class="tag">${esc(bookMeta(r.fair_source).title)} ${r.ref_price ? odds(r.ref_price) : ""}</span>` },
+        ? `<span class="tag" title="Average no-vig price of ${r.fair_books} other books (not ${esc(bookMeta(r.book).title)} itself; books that share an odds feed count once)">${r.fair_books} other books</span>`
+        : `<span class="tag">${esc(bookMeta(r.fair_source).title)} ${r.ref_price ? odds(r.ref_price) : ""}</span>` },
     { key: "ref_hold", label: "Hold", num: true, html: (r) => pct(r.ref_hold) },
     { key: "stake", label: "Stake", num: true, html: (r) => `${money(r.stake)}<span class="sub">${pct(r.kelly, 2)} of bankroll</span>` },
     { key: "age_min", label: "Age", num: true, html: (r) => (r.age_min == null ? "–" : `${Math.max(0, Math.round(r.age_min))}m`) },
   ];
-  const note = `EV is measured against the vig-free price. Open is where this book's price for the bet started (the first price this device recorded); ▲ means it has moved in your favor since. Tap a player to see all of that game's props.`;
+  const note = `EV is measured against the vig-free price: Pinnacle's when it posts the line, otherwise the average of the other books (never the book being bet, and books that share an odds feed count once). Open is where this book's price for the bet started (the first price this device recorded); ▲ means it has moved in your favor since. Tap a player to see all of that game's props.`;
   if (isMobile()) return kpis + `<div class="m-list">${rows.map(evCard).join("")}</div><p class="foot-note">${note}</p>`;
   return kpis + table("ev", cols, rows, { key: "ev", asc: false }) + `<p class="foot-note">${note} Age is how old the book's price was when it was pulled.</p>`;
 }
@@ -1128,7 +1129,7 @@ function schedulePrice() {
 
 async function priceSlip() {
   const body = {
-    legs: slip.legs.map((l) => l.spec),
+    legs: slip.legs.map((l) => ({ ...l.spec, book: l.book ?? null })),
     correlations: Object.entries(slip.corr).map(([k, rho]) => { const [a, b] = k.split("~"); return { a, b, rho }; }),
     boost: Number(slip.boost) || 0,
     sgp_quote: slip.book && slip.quote?.american ? { book: slip.book, american: Number(slip.quote.american) } : null,
@@ -1530,7 +1531,7 @@ function matchupInline(r) {
 }
 
 function evCard(r) {
-  const source = r.fair_source === "consensus" ? `consensus of ${r.fair_books}` : bookMeta(r.fair_source).title;
+  const source = r.fair_source === "consensus" ? `${r.fair_books} other books` : bookMeta(r.fair_source).title;
   const warn = r.warnings.length ? ` <span class="warn-icon" title="${esc(r.warnings.join("; "))}">⚠</span>` : "";
   return `<article class="m-card">
     <div class="m-top">${betCell(r)}<span class="ev-pill ${r.ev < 0.0005 ? "zero" : ""}">${pct(r.ev, 2)}</span></div>

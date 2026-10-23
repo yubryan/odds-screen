@@ -104,6 +104,12 @@ export const BOOK_COLORS = {
   novig: "#22c3a6",
 };
 
+// Books that post from the same odds feed. In the stored snapshots Bally Bet and
+// betPARX quoted identical two-sided prices on 97.7% of 1,092 shared markets
+// (2026-10-22), so a consensus counts them as one source.
+export const FEEDS = { ballybet: "ballybet+betparx", betparx: "ballybet+betparx" };
+export const feedOf = (book) => FEEDS[book] ?? book;
+
 export const bookTitle = (key) => BOOK_TITLES[key] ?? key;
 
 /** The fetch list always includes the reference book. */
