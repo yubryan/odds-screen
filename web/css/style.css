@@ -555,3 +555,13 @@ tr.flash td { animation: flash 2.4s ease-out; }
 .mv.same { display: none; }
 .fair-mode { display: flex; align-items: center; gap: 8px; }
 @media (max-width: 760px) { .fair-mode { width: 100%; justify-content: space-between; } }
+
+/* one line at a time */
+.line-chips { display: flex; gap: 6px; padding: 10px 16px 0; overflow-x: auto; scrollbar-width: none; }
+.line-chips::-webkit-scrollbar { display: none; }
+.line-chips .chip { height: 28px; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
+.side-cell .line-chips, .player-head .line-chips { padding: 6px 0 0; }
+td.oc.other-line { padding: 4px; }
+.other-line-btn { width: 100%; border: 1px dashed var(--border-strong); background: transparent; color: var(--text-3); border-radius: 6px;
+  padding: 6px 4px; font: 500 11px var(--mono); cursor: pointer; }
+.other-line-btn:hover { color: var(--accent); border-color: var(--accent); }

@@ -79,10 +79,13 @@ def test_prop_screen(with_props):
                             method="power", previous={}, opening={})
     assert [m["market"] for m in out] == ["player_pass_yds"]
     player = out[0]["players"][0]
-    assert player["player"] == QB and player["line"] == 245.5 and player["n_books"] == 4
-    over, under = player["rows"]
-    assert over["best_book"] == "fanduel"  # 243.5 is the best Over line
-    assert under["best_book"] == "betmgm"  # 247.5 is the best Under line
+    assert player["player"] == QB and player["main_line"] == 245.5 and player["n_books"] == 4
+    lines = {ln["line"]: ln for ln in player["lines"]}
+    assert set(lines) == {245.5, 243.5, 247.5}
+    over, under = lines[245.5]["rows"]
+    assert set(over["cells"]) == {"pinnacle", "draftkings"}  # 243.5 and 247.5 aren't the same bet
+    assert over["best_book"] == "draftkings"
+    assert lines[243.5]["rows"][0]["best_book"] == "fanduel"
 
 
 class PropsClient:

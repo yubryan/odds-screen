@@ -795,9 +795,38 @@ function favorability(market, side, pt) {
   return -pt;
 }
 
-// pick(row) -> {spec without point, info} makes each bettable cell selectable for the parlay slip
-function oddsCells(rows, books, market, spread, pick = null) {
-  return rows.map((row) => {
+// ---- one line at a time: books are only compared at the same line ----
+const lineSel = new Map(); // "event|market[|player]" -> chosen line value
+const sameLine = (a, b) => (a == null && b == null) || a === b;
+function pickLine(group, key) {
+  const want = lineSel.has(key) ? lineSel.get(key) : group.main_line;
+  return group.lines.find((l) => sameLine(l.line, want)) ?? group.lines.find((l) => sameLine(l.line, group.main_line)) ?? group.lines[0];
+}
+function lineLabel(l, market) {
+  const r = l.rows[0];
+  return market === "spreads" ? `${teamShort(r.side)} ${point(r.point, true)}` : point(l.line, false);
+}
+function lineChips(group, key, market, chosen) {
+  if (group.lines.length < 2) return "";
+  return `<div class="line-chips" role="group" aria-label="Line">${group.lines.map((l) =>
+    `<button class="chip ${l === chosen ? "on" : ""}" data-line-key="${esc(key)}" data-line-val='${JSON.stringify(l.line)}'>${esc(lineLabel(l, market))}
+      <span class="muted">${l.n_books}</span></button>`).join("")}</div>`;
+}
+/** For books that aren't at the chosen line: (row index, book) -> the line they do post. */
+function otherLines(group, chosen) {
+  const by = chosen.rows.map(() => new Map());
+  for (const l of group.lines) {
+    if (l === chosen) continue;
+    l.rows.forEach((r, i) => { for (const b of Object.keys(r.cells)) if (!by[i].has(b)) by[i].set(b, { line: l.line, point: r.point }); });
+  }
+  return (i, book) => by[i]?.get(book) ?? null;
+}
+const allCells = (group) => group.lines.flatMap((l) => l.rows.map((r) => r.cells));
+
+// pick(row) -> {spec without point, info} makes each bettable cell selectable for the parlay slip.
+// others(rowIndex, book) names the line a book posts when it isn't at this one.
+function oddsCells(rows, books, market, spread, pick = null, others = null, lineKey = "") {
+  return rows.map((row, ri) => {
     const fair = row.fair
       ? `<td class="oc fair-col" title="vig-free · ${esc(row.fair.source)}"><span class="pt">${point(row.fair.point, spread)}</span>${odds(row.fair.price)}</td>`
       : `<td class="oc fair-col empty">–</td>`;
@@ -809,7 +838,13 @@ function oddsCells(rows, books, market, spread, pick = null) {
       : `<td class="oc open-col empty">–</td>`;
     const cells = books.map((b) => {
       const c = row.cells[b.key];
-      if (!c) return `<td class="oc empty">–</td>`;
+      if (!c) {
+        const o = others?.(ri, b.key);
+        if (!o) return `<td class="oc empty">–</td>`;
+        const at = point(o.point, spread);
+        return `<td class="oc other-line"><button class="other-line-btn" data-line-key="${esc(lineKey)}" data-line-val='${JSON.stringify(o.line)}'
+          title="${esc(b.title)} posts ${esc(at)}, not this line, so its price isn't comparable here. Tap to compare at ${esc(at)}.">@ ${esc(at)}</button></td>`;
+      }
       let mv = "";
       if (c.prev_price != null && (c.prev_price !== c.price || c.prev_point !== c.point)) {
         // better for the bettor = better line first, then better price
@@ -845,14 +880,16 @@ const bookHeaders = (books) => books.map((b) =>
 function renderScreen(data) {
   if (!data.events.length) return emptyState("No upcoming games", "The latest snapshot has no games that haven't started.");
   const spread = state.market === "spreads";
-  const books = visibleBooks(data.events.flatMap((ev) => ev.rows.map((r) => r.cells)));
+  const books = visibleBooks(data.events.flatMap(allCells));
   return `<div class="events">${data.events.map((ev) => {
     const mt = meta.markets.find((m) => m.key === state.market).title;
-    const built = oddsCells(ev.rows, books, state.market, spread, (row) => ({
+    const key = `${ev.id}|${state.market}`;
+    const chosen = pickLine(ev, key);
+    const built = oddsCells(chosen.rows, books, state.market, spread, (row) => ({
       spec: { sport: state.sport, event_id: ev.id, market: state.market, outcome: row.side, description: null },
       info: legInfo(ev, { market_title: mt }),
-    }));
-    const rows = ev.rows.map((row, i) => {
+    }), otherLines(ev, chosen), key);
+    const rows = chosen.rows.map((row, i) => {
       const label = state.market === "totals"
         ? `<div class="bet"><span class="ou-badge">${row.side === "Over" ? "O" : "U"}</span><b>${esc(row.side)}</b></div>`
         : `<div class="bet">${teamLogo(row.side, "lg")}<b>${esc(isMobile() ? teamShort(row.side) : row.side)}</b></div>`;
@@ -864,10 +901,11 @@ function renderScreen(data) {
           <div><div class="names">${esc(ev.away)} @ ${esc(ev.home)}${preTag(ev)}</div><span class="sub">${kickoff(ev.commence_time)}</span></div></div>
         <div class="event-actions"><button class="btn btn-sm btn-ghost" data-history="${esc(ev.id)}" data-name="${esc(ev.name)}" data-market="${state.market}">Line history</button></div>
       </div>
+      ${lineChips(ev, key, state.market, chosen)}
       <div class="table-wrap"><table><thead><tr><th>${esc(meta.markets.find((m) => m.key === state.market).title)}</th><th class="num fair-col">Fair</th><th class="num open-col">Open</th>${bookHeaders(books)}</tr></thead><tbody>${rows}</tbody></table></div>
     </div>`;
   }).join("")}</div>
-  <p class="foot-note">Click any price to add that exact bet to your parlay (↗ opens the sportsbook). Green marks the best line and price among your books. ▲▼ show movement since the previous refresh. Open is the first line this device recorded (${esc(bookMeta(meta.reference).title)} when it posts one); turn on Opening odds in the filters to see every book's opener. ${esc(bookMeta(meta.reference).title)} is shown for reference only.</p>`;
+  <p class="foot-note">Books are compared at one line at a time (the one most books post, unless you pick another). A book on a different line shows "@ its line" instead of a price; tap it to compare at that line. Click any price to add that exact bet to your parlay (↗ opens the sportsbook). Green marks the best price at this line. ▲▼ show movement since the previous refresh. Open is the first line this device recorded (${esc(bookMeta(meta.reference).title)} when it posts one); turn on Opening odds in the filters to see every book's opener. ${esc(bookMeta(meta.reference).title)} is shown for reference only.</p>`;
 }
 
 // ---- Odds Screen (player props) ----------------------------------------------------
@@ -894,29 +932,32 @@ function renderPropsList(data) {
       ${open && ev.props_fetched_at ? `<div class="prop-body" id="prop-body-${esc(ev.id)}">${propData[ev.id] ? renderPropBody(ev, propData[ev.id]) : `<div class="skeleton" style="height:160px;margin:12px"></div>`}</div>` : ""}
     </div>`;
   }).join("")}</div>
-  <p class="foot-note">Click any price to add that exact bet to your parlay. Each pull is billed only for the prop markets books have posted for that game. Green marks the best line and price: the lowest number for an Over, the highest for an Under.</p>`;
+  <p class="foot-note">Each player is compared at one line at a time; a book on a different line shows "@ its line" (tap it, or the line chips, to switch). Click any price to add that exact bet to your parlay. Each pull is billed only for the prop markets books have posted for that game. Green marks the best price at the shown line.</p>`;
 }
 
 function renderPropBody(ev, data) {
   if (!data.markets.length) return `<div class="empty-state" style="padding:28px"><p>No books had props posted for this game at the last pull.</p></div>`;
   const sel = propMarket[ev.id] && data.markets.some((m) => m.market === propMarket[ev.id]) ? propMarket[ev.id] : data.markets[0].market;
   const market = data.markets.find((m) => m.market === sel);
-  const books = visibleBooks(market.players.flatMap((p) => p.rows.map((r) => r.cells)));
+  const books = visibleBooks(market.players.flatMap(allCells));
   const seg = `<div class="seg" data-prop-market="${esc(ev.id)}">${data.markets.map((m) =>
     `<button data-val="${esc(m.market)}" class="${m.market === sel ? "active" : ""}">${esc(m.title)} <span class="muted">${m.players.length}</span></button>`).join("")}</div>`;
   const body = market.players.map((pl, pi) => {
-    const built = oddsCells(pl.rows, books, sel, false, (row) => ({
+    const key = `${ev.id}|${sel}|${pl.player}`;
+    const chosen = pickLine(pl, key);
+    const built = oddsCells(chosen.rows, books, sel, false, (row) => ({
       spec: { sport: state.sport, event_id: ev.id, market: sel, outcome: row.side, description: pl.player },
       info: legInfo(ev, { is_prop: true, player: pl.player, market_title: market.title }),
-    }));
-    return pl.rows.map((row, i) => {
+    }), otherLines(pl, chosen), key);
+    const chips = lineChips(pl, key, sel, chosen);
+    return chosen.rows.map((row, i) => {
       const who = i === 0
         ? `<td class="side-cell" rowspan="2"><div class="bet">${avatar(ev.id, pl.player)}<div><b>${esc(pl.player)}</b><span class="sub">${pl.n_books} books
-            · <a href="#" data-history="${esc(ev.id)}" data-name="${esc(pl.player)}" data-market="${esc(sel)}" data-desc="${esc(pl.player)}">history</a></span></div></div></td>`
+            · <a href="#" data-history="${esc(ev.id)}" data-name="${esc(pl.player)}" data-market="${esc(sel)}" data-desc="${esc(pl.player)}">history</a></span>${chips}</div></div></td>`
         : "";
       if (isMobile()) {
         const head = i === 0 ? `<tr class="player-head" data-player="${esc(pl.player)}"><td colspan="${books.length + 3}"><div class="bet">${avatar(ev.id, pl.player, true)}<b>${esc(pl.player)}</b>
-          <span class="muted">${pl.n_books} books · <a href="#" data-history="${esc(ev.id)}" data-name="${esc(pl.player)}" data-market="${esc(sel)}" data-desc="${esc(pl.player)}">history</a></span></div></td></tr>` : "";
+          <span class="muted">${pl.n_books} books · <a href="#" data-history="${esc(ev.id)}" data-name="${esc(pl.player)}" data-market="${esc(sel)}" data-desc="${esc(pl.player)}">history</a></span></div>${chips}</td></tr>` : "";
         return `${head}<tr class="player-group ${i === 1 ? "last" : ""}" data-player="${esc(pl.player)}"><td class="side-cell muted">${row.side}</td>${built[i].fair}${built[i].open}${built[i].cells}</tr>`;
       }
       return `<tr class="player-group ${i === 1 ? "last" : ""}" data-player="${esc(pl.player)}">${who}<td class="muted" style="width:60px">${row.side}</td>${built[i].fair}${built[i].open}${built[i].cells}</tr>`;
@@ -975,6 +1016,9 @@ $("#content").addEventListener("click", async (e) => {
     renderContent();
     return;
   }
+
+  const ls = e.target.closest("[data-line-key]");
+  if (ls) { lineSel.set(ls.dataset.lineKey, JSON.parse(ls.dataset.lineVal)); renderContent(); return; }
 
   const pm = e.target.closest("[data-prop-market] button");
   if (pm) { propMarket[pm.parentElement.dataset.propMarket] = pm.dataset.val; renderContent(); return; }

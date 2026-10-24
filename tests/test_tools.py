@@ -70,13 +70,22 @@ def test_low_hold_takes_best_price_each_side(snap):
     assert ml["hold"] == pytest.approx(1 / 2.70 + 1 / 1.58 - 1)
 
 
-def test_screen_best_line_and_fair(snap):
+def test_screen_compares_books_at_one_line(snap):
     events, prices = snap
     out = build_screen(events, prices, market="spreads", bettable=BETTABLE, reference="pinnacle",
                        method="multiplicative", previous={}, opening={}, now=NOW)
     assert [e["id"] for e in out] == ["g1"]
-    bills, chiefs = out[0]["rows"]
-    assert bills["side"] == "Bills" and bills["best_book"] in {"draftkings", "betmgm"}  # +3.5 beats +2.5
-    assert chiefs["best_book"] == "fanduel"  # -2.5 beats -3.5
-    assert bills["fair"]["point"] == 3.0 and bills["fair"]["source"] == "pinnacle"
-    assert bills["fair"]["price"] == pytest.approx(2.0)
+    ev = out[0]
+    # DK and MGM post Chiefs -3.5; Pinnacle -3 and FanDuel -2.5 are separate lines, never mixed in
+    assert ev["main_line"] == -3.5
+    lines = {ln["line"]: ln for ln in ev["lines"]}
+    assert set(lines) == {-3.5, -3.0, -2.5}
+    bills, chiefs = lines[-3.5]["rows"]
+    assert bills["side"] == "Bills" and bills["point"] == 3.5 and chiefs["point"] == -3.5
+    assert set(bills["cells"]) == {"draftkings", "betmgm"}
+    assert bills["best_book"] == "draftkings"
+    assert bills["fair"] is None  # no Pinnacle at -3.5 and only 2 books for a consensus
+    pin_bills = lines[-3.0]["rows"][0]
+    assert pin_bills["fair"]["point"] == 3.0 and pin_bills["fair"]["source"] == "pinnacle"
+    assert pin_bills["fair"]["price"] == pytest.approx(2.0)
+    assert lines[-2.5]["rows"][1]["best_book"] == "fanduel"
