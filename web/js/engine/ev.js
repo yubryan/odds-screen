@@ -10,7 +10,7 @@ export const SUSPICIOUS_EV = 0.10; // EV this large on a main line is usually a 
 export const STALE_MINUTES = 30;
 
 export function findEv(events, prices, {
-  bettable, reference, method = "power", minEv = 0.0, minBooks = 3, kellyMult = 0.25, bankroll = 1000.0, now,
+  bettable, reference, method = "power", minEv = 0.0, minBooks = 3, kellyMult = 0.25, bankroll = 1000.0, now, fairMode = "auto",
 }) {
   const rows = [];
   for (const { key, books } of groupPrices(events, prices).values()) {
@@ -20,7 +20,7 @@ export function findEv(events, prices, {
     for (const [book, outcomes] of books) {
       if (book === reference || !bettable.has(book)) continue;
       // each book is measured against a fair price it isn't part of
-      const fair = fairForLine(books, { method, reference, minBooks, exclude: book });
+      const fair = fairForLine(books, { method, reference, minBooks, exclude: book, mode: fairMode });
       if (!fair) continue;
       for (const [outcome, p] of outcomes) {
         const prob = fair.probs.get(outcome);

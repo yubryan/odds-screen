@@ -553,3 +553,5 @@ tr.flash td { animation: flash 2.4s ease-out; }
 /* opening line on EV rows */
 .open-val { font-family: var(--mono); }
 .mv.same { display: none; }
+.fair-mode { display: flex; align-items: center; gap: 8px; }
+@media (max-width: 760px) { .fair-mode { width: 100%; justify-content: space-between; } }

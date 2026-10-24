@@ -17,17 +17,26 @@ const sameKeys = (m, sorted) => {
  * independent sources with both sides posted.
  * books: Map<book, Map<outcome, Price>>. Returns {probs: Map<outcome, p>, source, n_books, hold} or null.
  */
-export function fairForLine(books, { method, reference, minBooks = 3, exclude = null }) {
+export const FAIR_MODES = ["auto", "pinnacle", "consensus"];
+
+/** mode "auto": the reference book at this exact line, else the consensus.
+ * "pinnacle": the reference book only (null when it doesn't post the line).
+ * "consensus": always the consensus, with the reference book as one of the voters. */
+export function fairForLine(books, { method, reference, minBooks = 3, exclude = null, mode = "auto" }) {
+  if (!FAIR_MODES.includes(mode)) throw new Error(`fair mode must be one of ${FAIR_MODES}`);
   const all = new Set();
   for (const m of books.values()) for (const o of m.keys()) all.add(o);
   const outcomes = [...all].sort();
   if (outcomes.length < 2) return null;
 
-  const ref = books.get(reference);
-  if (ref && sameKeys(ref, outcomes)) {
-    const decimals = outcomes.map((o) => ref.get(o).price);
-    const probs = devig(decimals, method);
-    return { probs: new Map(outcomes.map((o, i) => [o, probs[i]])), source: reference, n_books: 1, hold: overround(decimals) };
+  if (mode !== "consensus") {
+    const ref = books.get(reference);
+    if (ref && sameKeys(ref, outcomes)) {
+      const decimals = outcomes.map((o) => ref.get(o).price);
+      const probs = devig(decimals, method);
+      return { probs: new Map(outcomes.map((o, i) => [o, probs[i]])), source: reference, n_books: 1, hold: overround(decimals) };
+    }
+    if (mode === "pinnacle") return null;
   }
 
   const skip = exclude ? feedOf(exclude) : null;

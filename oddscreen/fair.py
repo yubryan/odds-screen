@@ -8,6 +8,9 @@ from .odds_math import devig, overround
 from .models import Price
 
 
+FAIR_MODES = ("auto", "pinnacle", "consensus")
+
+
 @dataclass(frozen=True)
 class FairLine:
     probs: dict[str, float]  # outcome -> fair probability
@@ -23,20 +26,32 @@ def fair_for_line(
     reference: str,
     min_books: int = 3,
     exclude: str | None = None,
+    mode: str = "auto",
 ) -> FairLine | None:
-    """De-vig the reference book at this exact line. If it doesn't post this
-    line, average the de-vigged probabilities of the books that do: one vote
-    per odds feed (books sharing a feed count once), leaving out `exclude` and
-    its feed-mates, since a book can't vouch for its own price. Needs
-    `min_books` independent sources with both sides posted."""
+    """Fair probabilities for one line.
+
+    mode "auto": de-vig the reference book at this exact line; if it doesn't
+    post it, fall back to the consensus. "pinnacle": the reference book only
+    (None when it doesn't post the line). "consensus": always the consensus,
+    with the reference book as one of the voters.
+
+    Consensus: average of the books' de-vigged probabilities, one vote per odds
+    feed (books sharing a feed count once), leaving out `exclude` and its
+    feed-mates, since a book can't vouch for its own price. Needs `min_books`
+    independent sources with both sides posted."""
+    if mode not in FAIR_MODES:
+        raise ValueError(f"fair mode must be one of {FAIR_MODES}")
     outcomes = sorted(set().union(*(m.keys() for m in books.values())))
     if len(outcomes) < 2:
         return None
 
-    ref = books.get(reference)
-    if ref is not None and sorted(ref) == outcomes:
-        decimals = [ref[o].price for o in outcomes]
-        return FairLine(dict(zip(outcomes, devig(decimals, method))), reference, 1, overround(decimals))
+    if mode != "consensus":
+        ref = books.get(reference)
+        if ref is not None and sorted(ref) == outcomes:
+            decimals = [ref[o].price for o in outcomes]
+            return FairLine(dict(zip(outcomes, devig(decimals, method))), reference, 1, overround(decimals))
+        if mode == "pinnacle":
+            return None
 
     skip = feed_of(exclude) if exclude else None
     votes: dict[str, list[tuple[list[float], float]]] = {}

@@ -20,7 +20,7 @@ const DEFAULTS = {
   sport: "nfl", tab: "ev", fmt: "american", books: null, kind: "all",
   method: "power", minEv: 0, kelly: 0.25, bankroll: 1000, minBooks: 3,
   market: "spreads", maxMiss: 5, maxHold: 5, stake: 100,
-  maxStakePct: 1, parlayView: "slip", showOpen: false, evWindow: "all",
+  maxStakePct: 1, parlayView: "slip", showOpen: false, evWindow: "all", fairMode: "auto",
   pullMarkets: ["h2h", "spreads", "totals"], propPull: {},
   gen: { sports: ["nfl"], kind: "all", minLegs: 2, maxLegs: 4, minOdds: "", maxOdds: "", minLegEv: 0, boost: 0, sort: "ev", maxReuse: 3 },
 };
@@ -339,6 +339,8 @@ document.addEventListener("click", (e) => {
     if (!pop.hidden) { renderGamesPopover(); placePopover(pop, $("#games-btn")); }
     return;
   }
+  const fm = e.target.closest("[data-fair-mode]");
+  if (fm) { if (fm.dataset.fairMode !== state.fairMode) set({ fairMode: fm.dataset.fairMode }); return; }
   const w = e.target.closest("[data-ev-window]");
   if (w) { state.evWindow = w.dataset.evWindow; saveSettings(); renderContent(); updateCounts(); }
 });
@@ -617,7 +619,7 @@ async function load() {
   const s = state.sport;
   const k = `&kind=${state.kind}`;
   const urls = {
-    ev: `/api/ev?sport=${s}${k}&method=${state.method}&min_ev=${state.minEv / 100}&kelly=${state.kelly}&bankroll=${state.bankroll}&min_books=${state.minBooks}`,
+    ev: `/api/ev?sport=${s}${k}&method=${state.method}&min_ev=${state.minEv / 100}&kelly=${state.kelly}&bankroll=${state.bankroll}&min_books=${state.minBooks}&fair=${state.fairMode}`,
     screen: `/api/screen?sport=${s}&market=${state.market}&method=${state.method}`,
     middles: `/api/middles?sport=${s}${k}&stake=${state.stake}`,
     lowhold: `/api/lowhold?sport=${s}${k}`,
@@ -688,10 +690,21 @@ function evGameList(rows) {
   return [...games.values()].sort((a, b) => a.commence_time.localeCompare(b.commence_time));
 }
 
+const FAIR_MODE_LABELS = [
+  ["auto", "Auto", "Pinnacle when it posts the line, otherwise the consensus of the other books"],
+  ["pinnacle", "Pinnacle", "Pinnacle's no-vig price only; bets on lines Pinnacle doesn't post are left out"],
+  ["consensus", "Consensus", "Average no-vig price of the other books (Pinnacle included, the book being bet left out, shared feeds counted once, 3+ books)"],
+];
+function fairModeSeg() {
+  return `<div class="fair-mode"><span class="field">Fair value</span><div class="seg">${FAIR_MODE_LABELS.map(([k, l, tip]) =>
+    `<button data-fair-mode="${k}" class="${state.fairMode === k ? "active" : ""}" title="${esc(tip)}">${l}</button>`).join("")}</div></div>`;
+}
+
 function evFilterBar(rows) {
   const games = evGameList(rows);
   const label = !evGames ? "All games" : evGames.size === 1 ? `${teamShort(games.find((g) => evGames.has(g.event_id))?.away ?? "")} @ ${teamShort(games.find((g) => evGames.has(g.event_id))?.home ?? "")}` : `${evGames.size} games`;
   return `<div class="ev-filters">
+    ${fairModeSeg()}
     <div class="seg">${EV_WINDOWS.map(([k, l]) => {
       const n = rows.filter((r) => inWindow(r, k) && (!evGames || evGames.has(r.event_id))).length;
       return `<button data-ev-window="${k}" class="${state.evWindow === k ? "active" : ""}">${l} <span class="muted">${n}</span></button>`;
@@ -713,7 +726,12 @@ function renderGamesPopover() {
 }
 
 function renderEV(data) {
-  if (!data.rows.length) return emptyState("No +EV bets right now", `Nothing at or above ${state.minEv}% EV in the latest snapshot. Lines move, so try again after a refresh.`);
+  if (!data.rows.length) {
+    const why = state.fairMode === "pinnacle" ? " using Pinnacle only. Try Auto or Consensus to price lines Pinnacle doesn't post."
+      : state.fairMode === "consensus" ? " using the consensus. Try Auto or Pinnacle." : ". Lines move, so try again after a refresh.";
+    return (data.has_data ? `<div class="ev-filters">${fairModeSeg()}</div>` : "") +
+      emptyState("No +EV bets right now", `Nothing at or above ${state.minEv}% EV in the latest snapshot${why}`);
+  }
   const bar = evFilterBar(data.rows);
   const rows = evFiltered(data.rows);
   if (!rows.length) return bar + emptyState("No +EV bets match these filters", "Try a longer time window or pick more games.");
@@ -744,7 +762,8 @@ function renderEV(data) {
     { key: "stake", label: "Stake", num: true, html: (r) => `${money(r.stake)}<span class="sub">${pct(r.kelly, 2)} of bankroll</span>` },
     { key: "age_min", label: "Age", num: true, html: (r) => (r.age_min == null ? "–" : `${Math.max(0, Math.round(r.age_min))}m`) },
   ];
-  const note = `EV is measured against the vig-free price: Pinnacle's when it posts the line, otherwise the average of the other books (never the book being bet, and books that share an odds feed count once). Open is where this book's price for the bet started (the first price this device recorded); ▲ means it has moved in your favor since. Tap a player to see all of that game's props.`;
+  const fairNote = { auto: "Pinnacle's when it posts the line, otherwise the average of the other books", pinnacle: "Pinnacle's only", consensus: "the average of the other books, Pinnacle included" }[state.fairMode];
+  const note = `EV is measured against the vig-free price: ${fairNote} (a consensus never includes the book being bet, and books that share an odds feed count once). Open is where this book's price for the bet started (the first price this device recorded); ▲ means it has moved in your favor since. Tap a player to see all of that game's props.`;
   if (isMobile()) return kpis + `<div class="m-list">${rows.map(evCard).join("")}</div><p class="foot-note">${note}</p>`;
   return kpis + table("ev", cols, rows, { key: "ev", asc: false }) + `<p class="foot-note">${note} Age is how old the book's price was when it was pulled.</p>`;
 }

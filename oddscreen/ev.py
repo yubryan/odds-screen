@@ -25,6 +25,7 @@ def find_ev(
     kelly_mult: float = 0.25,
     bankroll: float = 1000.0,
     now: datetime,
+    fair_mode: str = "auto",
 ) -> list[dict]:
     rows: list[dict] = []
     for key, books in group_prices(events, prices).items():
@@ -36,7 +37,8 @@ def find_ev(
             if book == reference or book not in bettable:
                 continue
             # each book is measured against a fair price it isn't part of
-            fair = fair_for_line(books, method=method, reference=reference, min_books=min_books, exclude=book)
+            fair = fair_for_line(books, method=method, reference=reference, min_books=min_books, exclude=book,
+                                 mode=fair_mode)
             if fair is None:
                 continue
             for outcome, p in outcomes.items():

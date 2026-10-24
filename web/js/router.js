@@ -57,6 +57,11 @@ export class LocalApi {
     return m;
   }
 
+  fairMode(m = "auto") {
+    if (!["auto", "pinnacle", "consensus"].includes(m)) throw new ApiError(400, "fair must be auto, pinnacle or consensus");
+    return m;
+  }
+
   kind(k = "all") {
     if (!KINDS.has(k)) throw new ApiError(400, "kind must be all, main or props");
     return k;
@@ -110,6 +115,7 @@ export class LocalApi {
       const rows = findEv(events, prices, {
         bettable: this.bettable(q.books), reference: REFERENCE_BOOK, method: this.method(q.method),
         minEv: num(q.min_ev, 0), minBooks: num(q.min_books, 3), kellyMult: num(q.kelly, 0.25), bankroll: num(q.bankroll, 1000), now,
+        fairMode: this.fairMode(q.fair),
       });
       // where this book's price for this exact bet opened (first price this device recorded)
       const opening = this.store.openingPrices([...new Set(rows.map((r) => r.event_id))], [...new Set(rows.map((r) => r.market))]);

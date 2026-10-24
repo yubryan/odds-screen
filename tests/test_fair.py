@@ -37,3 +37,19 @@ def test_pinnacle_line_ignores_exclusion():
     books = line(pinnacle=(1.95, 1.95), draftkings=(2.05, 1.80))
     fair = fair_for_line(books, method="power", reference="pinnacle", exclude="draftkings")
     assert fair.source == "pinnacle" and abs(fair.probs["Over"] - 0.5) < 1e-12
+
+
+def test_fair_modes():
+    import pytest
+    books = line(pinnacle=(1.95, 1.95), draftkings=(2.05, 1.80), fanduel=(1.91, 1.91), betmgm=(1.93, 1.89), espnbet=(1.90, 1.92))
+    auto = fair_for_line(books, method="multiplicative", reference="pinnacle", exclude="draftkings")
+    assert auto.source == "pinnacle"
+    cons = fair_for_line(books, method="multiplicative", reference="pinnacle", exclude="draftkings", mode="consensus")
+    assert cons.source == "consensus" and cons.n_books == 4  # Pinnacle votes; DK is out
+    expect = sum(devig(d, "multiplicative")[0] for d in ([1.95, 1.95], [1.91, 1.91], [1.93, 1.89], [1.90, 1.92])) / 4
+    assert abs(cons.probs["Over"] - expect) < 1e-12
+    no_pin = line(draftkings=(2.05, 1.80), fanduel=(1.91, 1.91), betmgm=(1.93, 1.89), espnbet=(1.90, 1.92))
+    assert fair_for_line(no_pin, method="power", reference="pinnacle", mode="pinnacle") is None
+    assert fair_for_line(no_pin, method="power", reference="pinnacle", mode="auto").source == "consensus"
+    with pytest.raises(ValueError):
+        fair_for_line(books, method="power", reference="pinnacle", mode="nope")
