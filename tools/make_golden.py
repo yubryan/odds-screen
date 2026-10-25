@@ -76,6 +76,10 @@ def build(sport: str, last_id: int, now_iso: str) -> dict:
         {"kind": "all", "method": "additive", "min_ev": 0.0, "min_books": 3, "kelly_mult": 0.25, "bankroll": 1000.0},
         {"kind": "all", "method": "power", "min_ev": -1.0, "min_books": 3, "kelly_mult": 0.25, "bankroll": 1000.0, "fair_mode": "consensus"},
         {"kind": "all", "method": "power", "min_ev": -1.0, "min_books": 3, "kelly_mult": 0.25, "bankroll": 1000.0, "fair_mode": "pinnacle"},
+        {"kind": "props", "method": "power", "min_ev": -1.0, "min_books": 3, "kelly_mult": 0.25, "bankroll": 1000.0,
+         "fair_mode": "consensus", "weighted": False},
+        {"kind": "all", "method": "multiplicative", "min_ev": -1.0, "min_books": 2, "kelly_mult": 0.25, "bankroll": 1000.0,
+         "fair_mode": "consensus", "max_width": 30.0},
     ]
     cases["ev"] = []
     for prm in ev_params:

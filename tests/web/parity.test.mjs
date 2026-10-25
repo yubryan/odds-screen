@@ -76,6 +76,7 @@ for (const sport of ["nfl", "nba"]) {
       const out = findEv(events, ofKind(prices, p.kind), {
         bettable: BETTABLE, reference: REFERENCE_BOOK, method: p.method, minEv: p.min_ev, minBooks: p.min_books,
         kellyMult: p.kelly_mult, bankroll: p.bankroll, now, fairMode: p.fair_mode ?? "auto",
+        weighted: p.weighted ?? true, maxWidth: p.max_width ?? null,
       });
       close(out, c.out, EXACT, `ev(${JSON.stringify(p)})`);
     }

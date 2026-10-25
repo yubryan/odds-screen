@@ -565,3 +565,17 @@ td.oc.other-line { padding: 4px; }
 .other-line-btn { width: 100%; border: 1px dashed var(--border-strong); background: transparent; color: var(--text-3); border-radius: 6px;
   padding: 6px 4px; font: 500 11px var(--mono); cursor: pointer; }
 .other-line-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+/* fair-price breakdown */
+.fair-link { border: 0; background: none; color: inherit; font: inherit; cursor: pointer; padding: 0; text-align: inherit; }
+.fair-link:hover { color: var(--accent); }
+.fd-i { font-size: 10px; margin-left: 3px; color: var(--text-3); vertical-align: super; }
+.fair-link:hover .fd-i { color: var(--accent); }
+.fd-summary { display: flex; gap: 18px; align-items: flex-start; margin-bottom: 14px; flex-wrap: wrap; }
+.fd-how { flex: 1; min-width: 220px; font-size: 13px; color: var(--text-2); }
+tr.fd-unused td { color: var(--text-3); }
+.fd-reason { white-space: normal; font-size: 12px; min-width: 160px; }
+.fd-lines { display: flex; flex-wrap: wrap; gap: 6px; }
+.fd-lines .chip { height: auto; padding: 6px 10px; white-space: normal; text-align: left; }
+.card.flash-card { animation: flashcard 2.4s ease-out; }
+@keyframes flashcard { 0%, 35% { box-shadow: 0 0 0 2px var(--accent); } 100% { box-shadow: none; } }

@@ -140,12 +140,14 @@ def ev(
     bankroll: float = Query(1000.0, gt=0),
     min_books: int = Query(3, ge=1),
     fair: Literal["auto", "pinnacle", "consensus"] = "auto",
+    weighted: bool = True,
+    max_width: float | None = None,
 ):
     fetch, events, prices, now = _snapshot(sport, kind)
     rows = find_ev(
         events, prices, bettable=_bettable(books), reference=config.REFERENCE_BOOK,
         method=_method(method), min_ev=min_ev, min_books=min_books, kelly_mult=kelly,
-        bankroll=bankroll, now=now, fair_mode=fair,
+        bankroll=bankroll, now=now, fair_mode=fair, weighted=weighted, max_width=max_width,
     )
     return {"fetch": fetch, "has_data": bool(prices), "rows": rows}
 

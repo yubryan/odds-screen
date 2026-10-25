@@ -198,7 +198,7 @@ test("consensus counts books that share a feed once and leaves a book out of its
   const line = (books) => new Map(Object.entries(books).map(([b, [o, u]]) => [b, new Map([
     ["Over", { book: b, outcome: "Over", price: o, point: 45.5 }], ["Under", { book: b, outcome: "Under", price: u, point: 45.5 }]])]));
   const shared = fairForLine(line({ ballybet: [2.10, 1.75], betparx: [2.10, 1.75], draftkings: [1.91, 1.91], fanduel: [1.95, 1.87] }),
-    { method: "multiplicative", reference: "pinnacle", minBooks: 3 });
+    { method: "multiplicative", reference: "pinnacle", minBooks: 3, weighted: false });
   const expect = [[2.10, 1.75], [1.91, 1.91], [1.95, 1.87]].reduce((a, d) => a + devig(d, "multiplicative")[0], 0) / 3;
   assert.equal(shared.n_books, 3);
   assert.ok(Math.abs(shared.probs.get("Over") - expect) < 1e-12);
@@ -211,4 +211,37 @@ test("consensus counts books that share a feed once and leaves a book out of its
   assert.ok(without.probs.get("Over") > withDk.probs.get("Over"));
   const small = line({ draftkings: [1.91, 1.91], fanduel: [1.95, 1.87], betmgm: [1.93, 1.89] });
   assert.equal(fairForLine(small, { method: "power", reference: "pinnacle", minBooks: 3, exclude: "fanduel" }), null);
+});
+
+
+test("Kambi books share one down-weighted vote; width filters wide markets; the breakdown matches the price", async () => {
+  const { fairDetail, fairForLine, marketWidth } = await import("../../web/js/engine/fair.js");
+  const { sourceWeight } = await import("../../web/js/engine/config.js");
+  const { americanToDecimal: d, devig } = await import("../../web/js/engine/odds_math.js");
+  const props = (books) => new Map(Object.entries(books).map(([b, [o, u]]) => [b, new Map([
+    ["Over", { book: b, market: "player_points", outcome: "Over", price: o, point: 18.5 }],
+    ["Under", { book: b, market: "player_points", outcome: "Under", price: u, point: 18.5 }]])]));
+  // three Kambi books + two others = 3 sources, Kambi weighted below FanDuel
+  const books = props({ betrivers: [1.70, 2.15], ballybet: [1.72, 2.10], betparx: [1.72, 2.10], fanduel: [2.00, 1.80], draftkings: [1.91, 1.91] });
+  const fair = fairForLine(books, { method: "multiplicative", reference: "pinnacle", minBooks: 3 });
+  assert.equal(fair.n_books, 3);
+  assert.ok(sourceWeight("kambi", "player_points") < sourceWeight("fanduel", "player_points"));
+  const kambi = ([[1.70, 2.15], [1.72, 2.10], [1.72, 2.10]].reduce((a, x) => a + devig(x, "multiplicative")[0], 0)) / 3;
+  const expect = (sourceWeight("kambi", "player_points") * kambi + sourceWeight("fanduel", "player_points") * devig([2.00, 1.80], "multiplicative")[0]
+    + sourceWeight("draftkings", "player_points") * devig([1.91, 1.91], "multiplicative")[0])
+    / (sourceWeight("kambi", "player_points") + sourceWeight("fanduel", "player_points") + sourceWeight("draftkings", "player_points"));
+  assert.ok(Math.abs(fair.probs.get("Over") - expect) < 1e-12);
+  // the breakdown explains every book and agrees with the price
+  const detail = fairDetail(books, { method: "multiplicative", reference: "pinnacle", minBooks: 3, exclude: "draftkings" });
+  const why = Object.fromEntries(detail.books.map((r) => [r.book, r.reason]));
+  assert.equal(why.draftkings, "the book being priced");
+  assert.equal(detail.fair, null); // only Kambi + FanDuel left = 2 sources
+  assert.match(why.fanduel, /not enough independent books \(2 of 3\)/);
+  const full = fairDetail(books, { method: "multiplicative", reference: "pinnacle", minBooks: 3 });
+  const reasons = Object.fromEntries(full.books.map((r) => [r.book, r.reason]));
+  assert.match(reasons.betrivers, /shares one vote with ballybet, betparx/);
+  assert.ok(Math.abs(full.fair.probs.get("Over") - fair.probs.get("Over")) < 1e-15);
+  // market width
+  assert.equal(Math.round(marketWidth([d(-110), d(-110)])), 20);
+  assert.equal(Math.round(marketWidth([d(125), d(-165)])), 40);
 });

@@ -121,14 +121,36 @@ BOOK_COLORS = {
 }
 
 
-# Books that post from the same odds feed. In the stored snapshots Bally Bet and
-# betPARX quoted identical two-sided prices on 97.7% of 1,092 shared markets
-# (2026-10-22), so a consensus counts them as one source.
-FEEDS = {"ballybet": "ballybet+betparx", "betparx": "ballybet+betparx"}
+# Books that price from the same engine count as one source in a consensus.
+# BetRivers, Bally Bet and betPARX all run on Kambi: in the stored snapshots Bally
+# and betPARX quoted identical two-sided prices on 97.7% of shared markets and
+# BetRivers matched them 39-46% of the time (vs ~20-30% for unrelated books),
+# and Pikkit's sharpness rankings treat "Kambi" as one book.
+FEEDS = {"betrivers": "kambi", "ballybet": "kambi", "betparx": "kambi"}
 
 
 def feed_of(book: str) -> str:
     return FEEDS.get(book, book)
+
+
+# How much each source counts in a consensus, by market type. Approximate, from
+# Pikkit's published sharpness rankings (which books other books move toward):
+# NBA props 2024: DraftKings 1.046, FanDuel 1.007, Caesars 0.995, Kambi 0.627;
+# MLB props: FanDuel 1.236, Pinnacle 0.918, DraftKings 0.859, Kambi 0.531;
+# Dec 2024 prop rankings: FanDuel 1st (NBA), Pinnacle 1st/FanDuel 2nd (NFL),
+# NoVig 4th, Kambi last. NBA main markets: Pinnacle 1.076, DraftKings 1.069,
+# BetOnline 1.058, BetMGM 0.944; Kambi last on main markets too.
+SHARPNESS = {
+    "props": {"fanduel": 1.15, "pinnacle": 1.05, "novig": 1.05, "draftkings": 1.0, "betonlineag": 0.95,
+              "espnbet": 0.9, "hardrockbet": 0.9, "betmgm": 0.9, "kambi": 0.6},
+    "main": {"pinnacle": 1.15, "draftkings": 1.05, "betonlineag": 1.05, "novig": 1.05, "fanduel": 1.0,
+             "espnbet": 0.95, "hardrockbet": 0.95, "betmgm": 0.9, "kambi": 0.65},
+}
+
+
+def source_weight(source: str, market: str) -> float:
+    """Weight of an odds source (a feed, see feed_of) in a consensus for this market."""
+    return SHARPNESS["props" if is_prop(market) else "main"].get(source, 1.0)
 
 
 def book_title(key: str) -> str:

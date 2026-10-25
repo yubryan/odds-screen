@@ -26,6 +26,8 @@ def find_ev(
     bankroll: float = 1000.0,
     now: datetime,
     fair_mode: str = "auto",
+    weighted: bool = True,
+    max_width: float | None = None,
 ) -> list[dict]:
     rows: list[dict] = []
     for key, books in group_prices(events, prices).items():
@@ -38,9 +40,11 @@ def find_ev(
                 continue
             # each book is measured against a fair price it isn't part of
             fair = fair_for_line(books, method=method, reference=reference, min_books=min_books, exclude=book,
-                                 mode=fair_mode)
+                                 mode=fair_mode, weighted=weighted)
             if fair is None:
                 continue
+            if max_width is not None and fair.width is not None and fair.width > max_width:
+                continue  # the fair price comes from a market too wide to trust
             for outcome, p in outcomes.items():
                 prob = fair.probs[outcome]
                 ev = expected_value(prob, p.price)
@@ -82,6 +86,7 @@ def find_ev(
                     "fair_source": fair.source,
                     "fair_books": fair.n_books,
                     "ref_hold": fair.hold,
+                    "width": fair.width,
                     "ref_price": ref.price if ref else None,
                     "age_min": age_min,
                     "link": p.link,

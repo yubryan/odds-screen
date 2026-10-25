@@ -20,7 +20,7 @@ const DEFAULTS = {
   sport: "nfl", tab: "ev", fmt: "american", books: null, kind: "all",
   method: "power", minEv: 0, kelly: 0.25, bankroll: 1000, minBooks: 3,
   market: "spreads", maxMiss: 5, maxHold: 5, stake: 100,
-  maxStakePct: 1, parlayView: "slip", showOpen: false, evWindow: "all", fairMode: "auto",
+  maxStakePct: 1, parlayView: "slip", showOpen: false, evWindow: "all", fairMode: "auto", weighted: true, maxWidth: 40,
   pullMarkets: ["h2h", "spreads", "totals"], propPull: {},
   gen: { sports: ["nfl"], kind: "all", minLegs: 2, maxLegs: 4, minOdds: "", maxOdds: "", minLegEv: 0, boost: 0, sort: "ev", maxReuse: 3 },
 };
@@ -115,7 +115,7 @@ function freshClass(iso) {
   return m < 30 ? "fresh" : "stale";
 }
 const sportMeta = () => meta.sports.find((s) => s.id === state.sport);
-const bookMeta = (key) => meta.books.find((b) => b.key === key) || { key, title: key, color: "#888" };
+const bookMeta = (key) => meta.books.find((b) => b.key === key) || { key, title: BOOK_TITLES[key] ?? key, color: BOOK_COLORS[key] ?? "#888" };
 function booksParam() {
   return state.books ? `&books=${encodeURIComponent(state.books.join(","))}` : "";
 }
@@ -171,7 +171,7 @@ function matchupCell(r, sport = state.sport) {
 
 // a player's name/photo opens every prop for that game on the Odds Screen
 const propLink = (r, inner) =>
-  `<button class="prop-link" data-show-props="${esc(r.event_id)}" data-player="${esc(r.player)}" data-market="${esc(r.market)}"
+  `<button class="prop-link" data-show-props="${esc(r.event_id)}" data-player="${esc(r.player)}" data-market="${esc(r.market)}" data-point="${r.point ?? ""}"
     title="See all props for ${esc(teamShort(r.away))} @ ${esc(teamShort(r.home))}">${inner}</button>`;
 
 function betCell(r) {
@@ -568,7 +568,7 @@ function renderControls() {
     c.innerHTML = "";
   } else if (state.tab === "ev") {
     c.innerHTML = kindSeg() + methodSelect() + field("minEv", "Min EV", 0.5, "%") + field("kelly", "Kelly ×", 0.05) +
-      field("bankroll", "Bankroll", 100, "$") + field("minBooks", "Consensus books", 1);
+      field("bankroll", "Bankroll", 100, "$") + field("minBooks", "Consensus books", 1) + field("maxWidth", "Max width", 5, "¢");
   } else if (state.tab === "screen") {
     const markets = [...meta.markets, { key: "props", title: "Player Props" }];
     c.innerHTML = `<div class="seg" data-seg="market">${markets.map((m) =>
@@ -585,12 +585,13 @@ function renderControls() {
   }
 }
 
-const SERVER_KEYS = new Set(["method", "minEv", "kelly", "bankroll", "minBooks", "stake"]);
+const SERVER_KEYS = new Set(["method", "minEv", "kelly", "bankroll", "minBooks", "stake", "maxWidth"]);
 $("#tab-controls").addEventListener("change", (e) => {
   const el = e.target.closest("[data-key]");
   if (!el) return;
   const key = el.dataset.key;
-  set({ [key]: el.tagName === "SELECT" ? el.value : Number(el.value) }, SERVER_KEYS.has(key));
+  const value = el.tagName === "SELECT" ? el.value : el.value === "" && key === "maxWidth" ? null : Number(el.value);
+  set({ [key]: value }, SERVER_KEYS.has(key));
 });
 $("#tab-controls").addEventListener("click", (e) => {
   if (e.target.closest("[data-toggle-open]")) { set({ showOpen: !state.showOpen }, false); renderControls(); return; }
@@ -619,7 +620,7 @@ async function load() {
   const s = state.sport;
   const k = `&kind=${state.kind}`;
   const urls = {
-    ev: `/api/ev?sport=${s}${k}&method=${state.method}&min_ev=${state.minEv / 100}&kelly=${state.kelly}&bankroll=${state.bankroll}&min_books=${state.minBooks}&fair=${state.fairMode}`,
+    ev: `/api/ev?sport=${s}${k}&method=${state.method}&min_ev=${state.minEv / 100}&kelly=${state.kelly}&bankroll=${state.bankroll}&min_books=${state.minBooks}&fair=${state.fairMode}&weighted=${state.weighted ? 1 : 0}&max_width=${state.maxWidth ?? ""}`,
     screen: `/api/screen?sport=${s}&market=${state.market}&method=${state.method}`,
     middles: `/api/middles?sport=${s}${k}&stake=${state.stake}`,
     lowhold: `/api/lowhold?sport=${s}${k}`,
@@ -754,11 +755,11 @@ function renderEV(data) {
     { key: "book", label: "Book", html: (r) => bookCell(r.book, r.link), value: (r) => bookMeta(r.book).title },
     { key: "price", label: "Odds", num: true, html: (r) => `<span class="price">${odds(r.price)}</span>` },
     { key: "open_price", label: "Open", num: true, html: openCell },
-    { key: "fair_prob", label: "Fair", num: true, html: (r) => `${odds(r.fair_price)}<span class="sub">${pct(r.fair_prob)}</span>` },
+    { key: "fair_prob", label: "Fair", num: true, html: (r) => fairButton(evFairSpec(r), `${odds(r.fair_price)}<span class="sub">${pct(r.fair_prob)}</span>`) },
     { key: "fair_source", label: "Fair from", html: (r) => r.fair_source === "consensus"
         ? `<span class="tag" title="Average no-vig price of ${r.fair_books} other books (not ${esc(bookMeta(r.book).title)} itself; books that share an odds feed count once)">${r.fair_books} other books</span>`
         : `<span class="tag">${esc(bookMeta(r.fair_source).title)} ${r.ref_price ? odds(r.ref_price) : ""}</span>` },
-    { key: "ref_hold", label: "Hold", num: true, html: (r) => pct(r.ref_hold) },
+    { key: "width", label: "Width", num: true, html: (r) => (r.width == null ? "–" : `<span title="Gap between the two sides of the fair-price market, in cents (hold ${pct(r.ref_hold)}). Under 25¢ is tight; 40¢+ means the books are unsure.">${Math.round(r.width)}¢</span>`) },
     { key: "stake", label: "Stake", num: true, html: (r) => `${money(r.stake)}<span class="sub">${pct(r.kelly, 2)} of bankroll</span>` },
     { key: "age_min", label: "Age", num: true, html: (r) => (r.age_min == null ? "–" : `${Math.max(0, Math.round(r.age_min))}m`) },
   ];
@@ -827,9 +828,11 @@ const allCells = (group) => group.lines.flatMap((l) => l.rows.map((r) => r.cells
 // others(rowIndex, book) names the line a book posts when it isn't at this one.
 function oddsCells(rows, books, market, spread, pick = null, others = null, lineKey = "") {
   return rows.map((row, ri) => {
+    const fairSpec = pick ? { ...pick(row).spec, point: row.point, mode: "auto", exclude: null } : null;
+    const fairInner = row.fair ? `<span class="pt">${point(row.fair.point, spread)}</span>${odds(row.fair.price)}` : "";
     const fair = row.fair
-      ? `<td class="oc fair-col" title="vig-free · ${esc(row.fair.source)}"><span class="pt">${point(row.fair.point, spread)}</span>${odds(row.fair.price)}</td>`
-      : `<td class="oc fair-col empty">–</td>`;
+      ? `<td class="oc fair-col" title="vig-free · ${esc(row.fair.source)} · tap to see how">${fairSpec ? fairButton(fairSpec, fairInner) : fairInner}</td>`
+      : `<td class="oc fair-col empty">${fairSpec ? fairButton(fairSpec, "–") : "–"}</td>`;
     // Opening line: the reference book's first recorded price, else the best book's, else any book's
     const opener = [meta.reference, row.best_book, ...Object.keys(row.cells)]
       .map((k) => k && row.cells[k] && row.cells[k].open_price != null ? [k, row.cells[k]] : null).find(Boolean);
@@ -895,7 +898,7 @@ function renderScreen(data) {
         : `<div class="bet">${teamLogo(row.side, "lg")}<b>${esc(isMobile() ? teamShort(row.side) : row.side)}</b></div>`;
       return `<tr><td class="side-cell">${label}</td>${built[i].fair}${built[i].open}${built[i].cells}</tr>`;
     }).join("");
-    return `<div class="card">
+    return `<div class="card" data-event="${esc(ev.id)}">
       <div class="event-head">
         <div class="event-title"><span class="logo-pair">${teamLogo(ev.away, "lg")}${teamLogo(ev.home, "lg")}</span>
           <div><div class="names">${esc(ev.away)} @ ${esc(ev.home)}${preTag(ev)}</div><span class="sub">${kickoff(ev.commence_time)}</span></div></div>
@@ -980,16 +983,24 @@ async function loadPropBody(eventId) {
 
 let focusProp = null; // {eventId, player}: scroll to this player once the game's props render
 
-function showGameProps(eventId, player, market) {
+function showGameProps(eventId, player, market, line = null) {
   openProps.add(eventId);
   propMarket[eventId] = market;
+  if (line != null) lineSel.set(`${eventId}|${market}|${player}`, line); // open at the bet's own line
   focusProp = { eventId, player };
   state.market = "props";
   saveSettings();
   if (state.tab === "screen") load(); else location.hash = "screen";
 }
 
+let focusEvent = null; // main-lines card to scroll to after a jump from a bet
+
 function applyPropFocus() {
+  if (focusEvent && state.tab === "screen" && state.market !== "props") {
+    const card = document.querySelector(`.events > .card[data-event="${CSS.escape(focusEvent)}"]`);
+    if (card) { card.scrollIntoView({ block: "center", behavior: "smooth" }); card.classList.add("flash-card"); setTimeout(() => card.classList.remove("flash-card"), 2400); }
+    focusEvent = null;
+  }
   if (!focusProp) return;
   const body = document.getElementById(`prop-body-${focusProp.eventId}`);
   if (!body || !propData[focusProp.eventId]) return;
@@ -1002,7 +1013,7 @@ function applyPropFocus() {
 
 document.addEventListener("click", (e) => {
   const sp = e.target.closest("[data-show-props]");
-  if (sp) { e.preventDefault(); showGameProps(sp.dataset.showProps, sp.dataset.player, sp.dataset.market); }
+  if (sp) { e.preventDefault(); showGameProps(sp.dataset.showProps, sp.dataset.player, sp.dataset.market, sp.dataset.point === "" ? null : Number(sp.dataset.point)); }
 });
 
 $("#content").addEventListener("click", async (e) => {
@@ -1602,10 +1613,10 @@ function evCard(r) {
     <div class="m-stats">
       <div><span>Odds</span><b class="price">${odds(r.price)}</b></div>
       <div><span>Open</span><b>${openCell(r)}</b></div>
-      <div><span>Fair · ${pct(r.fair_prob, 0)}</span><b>${odds(r.fair_price)}</b></div>
+      <div><span>Fair · ${pct(r.fair_prob, 0)}</span><b>${fairButton(evFairSpec(r), odds(r.fair_price))}</b></div>
       <div><span>Stake</span><b>${money(r.stake)}</b></div>
     </div>
-    <div class="m-foot">${bookCell(r.book, r.link)}<span class="muted m-note">fair: ${esc(source)}${r.age_min != null ? ` · ${Math.max(0, Math.round(r.age_min))}m old` : ""}${warn}</span>
+    <div class="m-foot">${bookCell(r.book, r.link)}<span class="muted m-note">fair: ${esc(source)}${r.width != null ? ` · ${Math.round(r.width)}¢ wide` : ""}${r.age_min != null ? ` · ${Math.max(0, Math.round(r.age_min))}m old` : ""}${warn}</span>
       ${addBtn({ sport: state.sport, event_id: r.event_id, market: r.market, outcome: r.outcome, point: r.point, description: r.player }, legInfo(r), r.book, r.price)}</div>
   </article>`;
 }
@@ -1705,7 +1716,10 @@ function renderSettings() {
       <div class="book-grid">${books}</div></section>
     <section class="card set-card"><h3>Staking & pricing</h3><div class="set-grid">
       ${field("bankroll", "Bankroll", 100, "$")}${field("kelly", "Kelly ×", 0.05)}${field("maxStakePct", "Max parlay stake", 0.25, "%")}
-      ${field("minBooks", "Consensus books", 1)}${methodSelect()}</div></section>
+      ${field("minBooks", "Consensus books", 1)}${methodSelect()}
+      <label class="field"><input type="checkbox" data-weighted ${state.weighted ? "checked" : ""}> Weight books by sharpness</label></div>
+      <p class="foot-note" style="margin-top:10px">When a fair price comes from the consensus, sharper books count more (props: FanDuel, Pinnacle, NoVig, DraftKings
+        highest; Kambi books BetRivers, Bally Bet and betPARX lowest and counted as one book). Weights are approximate, from Pikkit's published sharpness rankings.</p></section>
     <section class="card set-card"><h3>Display</h3><div class="set-grid">
       <label class="field">Odds ${seg("data-set-fmt", state.fmt, [["american", "American"], ["decimal", "Decimal"]])}</label>
       <label class="field">Theme ${seg("data-set-theme", document.documentElement.dataset.theme, [["dark", "Dark"], ["light", "Light"]])}</label></div></section>
@@ -1783,12 +1797,90 @@ $("#content").addEventListener("change", async (e) => {
     renderContent();
     return;
   }
+  const wt = e.target.closest("[data-weighted]");
+  if (wt) { set({ weighted: wt.checked }, false); return; }
   const el = e.target.closest("[data-key]");
   if (el) {
     const key = el.dataset.key;
     set({ [key]: el.tagName === "SELECT" ? el.value : Number(el.value) }, false);
   }
 });
+
+// ---- how a fair price was calculated ------------------------------------------------
+
+/** What the EV row's fair price was built from: its line, its fair mode, its own book left out. */
+const evFairSpec = (r) => ({ sport: state.sport, event_id: r.event_id, market: r.market, description: r.player, outcome: r.outcome,
+  point: r.point, exclude: r.book, mode: state.fairMode });
+const fairButton = (spec, inner) =>
+  `<button class="fair-link" data-fd="${esc(JSON.stringify(spec))}" title="How was this fair price calculated?">${inner}<span class="fd-i">ⓘ</span></button>`;
+
+document.addEventListener("click", (e) => {
+  const fd = e.target.closest("[data-fd]");
+  if (fd) { e.preventDefault(); e.stopPropagation(); showFairDetail(JSON.parse(fd.dataset.fd)); }
+}, true);
+
+function lineValueFor(spec, home) {
+  if (spec.market === "h2h") return null;
+  if (spec.market === "spreads") return spec.outcome === home ? spec.point : -spec.point;
+  return spec.point;
+}
+
+function gotoLine(spec, home, line) {
+  $("#modal").close();
+  if (spec.market.startsWith("player_")) { showGameProps(spec.event_id, spec.description, spec.market, line); return; }
+  lineSel.set(`${spec.event_id}|${spec.market}`, line);
+  focusEvent = spec.event_id;
+  state.market = spec.market;
+  saveSettings();
+  if (state.tab === "screen") load(); else location.hash = "screen";
+}
+
+async function showFairDetail(spec) {
+  const q = new URLSearchParams({
+    sport: spec.sport ?? state.sport, event_id: spec.event_id, market: spec.market, description: spec.description ?? "",
+    point: spec.point ?? "", outcome: spec.outcome, exclude: spec.exclude ?? "", mode: spec.mode ?? "auto",
+    method: state.method, min_books: state.minBooks, weighted: state.weighted ? "1" : "0",
+  });
+  let d;
+  try { d = await api(`/api/fair-detail?${q}`); } catch (err) { toast(err.message, true); return; }
+  const spread = spec.market === "spreads";
+  const label = legLabel({ ...spec, point: spec.point });
+  const idx = d.outcomes.indexOf(spec.outcome);
+  const f = d.fair;
+  const usedW = d.books.filter((b) => b.used).reduce((a, b) => a + (b.weight ?? 0), 0);
+  const modeText = { auto: "Auto (Pinnacle when it posts this line, otherwise the consensus)", pinnacle: "Pinnacle only", consensus: "Consensus" }[d.mode];
+  const summary = !f
+    ? `<div class="alert">No fair price at this line. ${d.mode === "pinnacle" ? "Pinnacle doesn't post it." : `Fewer than ${state.minBooks} independent books post both sides of this exact line${d.exclude ? ` (not counting ${esc(bookTitle(d.exclude))})` : ""}.`}</div>`
+    : `<div class="fd-summary"><div><span class="muted">Fair ${esc(label)}</span><div class="m-big">${odds(1 / f.probs[spec.outcome])}</div><span class="sub">${pct(f.probs[spec.outcome], 1)} to win</span></div>
+       <div class="fd-how">${f.source === "consensus"
+         ? `Weighted average of <b>${f.n_books}</b> independent books' no-vig prices${d.exclude ? `, leaving out <b>${esc(bookTitle(d.exclude))}</b> (the book being priced)` : ""}.`
+         : `<b>${esc(bookTitle(f.source))}</b>'s price at this line with the vig removed.`}
+         ${f.width != null ? `<br>Market width: <b>${Math.round(f.width)}¢</b>${f.width > 40 ? " (wide: the books are unsure, treat with care)" : f.width <= 25 ? " (tight)" : ""}.` : ""}
+         <br><span class="muted">Fair value setting: ${esc(modeText)} · de-vig: ${esc(state.method.replace("_", " "))}${state.weighted ? " · sharpness-weighted" : " · equal weights"}</span></div></div>`;
+  const rows = [...d.books].sort((a, b) => (b.used - a.used) || ((b.weight ?? 0) - (a.weight ?? 0)));
+  const table = `<div class="card"><div class="table-wrap"><table><thead><tr><th>Book at ${esc(point(spec.point, spread) || "this line")}</th>
+      ${d.outcomes.map((o) => `<th class="num">${esc(o)}</th>`).join("")}<th class="num">No-vig ${esc(spec.outcome)}</th><th class="num">Counts</th><th class="num">Width</th><th>Status</th></tr></thead><tbody>${
+      rows.map((b) => `<tr class="${b.used ? "" : "fd-unused"}"><td>${bookCell(b.book)}</td>
+        ${d.outcomes.map((o) => `<td class="num">${b.prices[o] != null ? odds(b.prices[o]) : "–"}</td>`).join("")}
+        <td class="num">${b.probs ? pct(b.probs[idx], 1) : "–"}</td>
+        <td class="num">${b.used ? (f?.source === "consensus" ? pct(b.weight / usedW, 0) : "100%") : "–"}</td>
+        <td class="num">${b.width != null ? `${Math.round(b.width)}¢` : "–"}</td>
+        <td class="fd-reason">${b.used ? `<span class="pos">✓</span> ` : ""}${esc(b.reason ?? "")}</td></tr>`).join("")
+    }</tbody></table></div></div>`;
+  const home = d.event.home;
+  const lines = d.other_lines.length ? `<h4>Also posted at other lines (not used)</h4><div class="fd-lines">${d.other_lines.map((l) =>
+      `<button class="chip" data-goto-line='${JSON.stringify(l.line)}'>${esc(point(l.point, spread))} · ${l.books.map((b) => esc(bookTitle(b))).join(", ")}</button>`).join("")}</div>
+      <p class="foot-note">Different lines are different bets, so they never feed this fair price.</p>` : "";
+  $("#modal-title").textContent = "How the fair price was calculated";
+  $("#modal-body").onchange = null;
+  $("#modal-body").innerHTML = summary + table + lines +
+    `<div class="row-actions" style="margin-top:14px"><button class="btn btn-primary" data-goto-line='${JSON.stringify(lineValueFor(spec, home))}'>Open Odds Screen at this line</button></div>`;
+  $("#modal-body").onclick = (e) => {
+    const g = e.target.closest("[data-goto-line]");
+    if (g) gotoLine(spec, home, JSON.parse(g.dataset.gotoLine));
+  };
+  $("#modal").showModal();
+}
 
 // ---- line history modal ---------------------------------------------------------------
 

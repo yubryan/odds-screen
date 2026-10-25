@@ -3,9 +3,11 @@
 // api("/api/...") exactly as it did against the Python server.
 
 import {
-  DEFAULT_BOOKS, MAIN_MARKETS, PROP_MARKETS, REFERENCE_BOOK, SPORTS, BOOK_COLORS,
+  DEFAULT_BOOKS, MAIN_MARKETS, PROP_MARKETS, REFERENCE_BOOK, SPORTS, BOOK_COLORS, BOOK_TITLES, SOURCE_TITLES,
   bookTitle, isProp, marketTitle, propsCostPerEvent, refreshCost, withReference,
 } from "./engine/config.js";
+import { fairDetail } from "./engine/fair.js";
+import { groupPrices, isMoneyline, isSpread, lineKeyString } from "./engine/models.js";
 import { findEv } from "./engine/ev.js";
 import { findLowHold, findMiddles } from "./engine/middles.js";
 import { DEVIG_METHODS, americanToDecimal } from "./engine/odds_math.js";
@@ -115,7 +117,7 @@ export class LocalApi {
       const rows = findEv(events, prices, {
         bettable: this.bettable(q.books), reference: REFERENCE_BOOK, method: this.method(q.method),
         minEv: num(q.min_ev, 0), minBooks: num(q.min_books, 3), kellyMult: num(q.kelly, 0.25), bankroll: num(q.bankroll, 1000), now,
-        fairMode: this.fairMode(q.fair),
+        fairMode: this.fairMode(q.fair), weighted: q.weighted !== "0", maxWidth: q.max_width ? Number(q.max_width) : null,
       });
       // where this book's price for this exact bet opened (first price this device recorded)
       const opening = this.store.openingPrices([...new Set(rows.map((r) => r.event_id))], [...new Set(rows.map((r) => r.market))]);
@@ -159,6 +161,7 @@ export class LocalApi {
       const { fetch, events, prices, now } = this.snapshot(q.sport, this.kind(q.kind));
       return { fetch, has_data: prices.length > 0, rows: findLowHold(events, prices, { bettable: this.bettable(q.books), now }) };
     }
+    if (method === "GET" && p === "/api/fair-detail") return this.fairDetail(q);
     if (method === "GET" && p === "/api/history") {
       return { rows: this.store.history(q.event_id, q.market, q.description || null) };
     }
@@ -178,6 +181,38 @@ export class LocalApi {
     if (method === "POST" && p === "/api/parlay/generate") return this.parlayGenerate(body);
 
     throw new ApiError(404, `no route for ${method} ${p}`);
+  }
+
+  /** How one line's fair price was reached, book by book, plus the books that post other lines. */
+  fairDetail(q) {
+    const { events, prices } = this.snapshot(q.sport);
+    const event = events.get(q.event_id);
+    if (!event) throw new ApiError(404, "That game is no longer in the latest snapshot");
+    const desc = q.description || null;
+    const mine = prices.filter((x) => x.event_id === q.event_id && x.market === q.market && (x.description ?? null) === desc);
+    const point = q.point === "" || q.point == null ? null : Number(q.point);
+    const line = isMoneyline(q.market) ? null : isSpread(q.market) ? (q.outcome === event.home ? point : -point) : point;
+    const groups = groupPrices(events, mine);
+    const here = groups.get(lineKeyString(q.event_id, q.market, desc, line))?.books ?? new Map();
+    const detail = fairDetail(here, {
+      method: this.method(q.method), reference: REFERENCE_BOOK, minBooks: Number(q.min_books ?? 3),
+      exclude: q.exclude || null, mode: this.fairMode(q.mode), weighted: q.weighted !== "0",
+    });
+    const sidePoint = (ln) => (ln == null ? null : isSpread(q.market) ? (q.outcome === event.home ? ln : -ln) : ln);
+    const others = [...groups.values()].filter((g) => !Object.is(g.key.line, line) && g.key.line !== line)
+      .map((g) => ({ line: g.key.line, point: sidePoint(g.key.line), books: [...g.books.keys()] }))
+      .sort((a, b) => b.books.length - a.books.length);
+    return {
+      event: { id: event.id, home: event.home, away: event.away, commence_time: event.commence_time.toISOString() },
+      market: q.market, description: desc, outcome: q.outcome, point, line, exclude: q.exclude || null,
+      mode: detail.mode, outcomes: detail.outcomes,
+      books: detail.books.map((r) => ({
+        ...r, title: bookTitle(r.book), source_title: SOURCE_TITLES[r.source] ?? bookTitle(r.source),
+        reason: r.reason && r.reason.replace(/\b[a-z_]+\b/g, (w) => (w in BOOK_TITLES ? BOOK_TITLES[w] : w)),
+      })),
+      fair: detail.fair && { ...detail.fair, probs: Object.fromEntries(detail.fair.probs) },
+      other_lines: others,
+    };
   }
 
   meta() {

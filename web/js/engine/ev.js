@@ -11,6 +11,7 @@ export const STALE_MINUTES = 30;
 
 export function findEv(events, prices, {
   bettable, reference, method = "power", minEv = 0.0, minBooks = 3, kellyMult = 0.25, bankroll = 1000.0, now, fairMode = "auto",
+  weighted = true, maxWidth = null,
 }) {
   const rows = [];
   for (const { key, books } of groupPrices(events, prices).values()) {
@@ -20,8 +21,9 @@ export function findEv(events, prices, {
     for (const [book, outcomes] of books) {
       if (book === reference || !bettable.has(book)) continue;
       // each book is measured against a fair price it isn't part of
-      const fair = fairForLine(books, { method, reference, minBooks, exclude: book, mode: fairMode });
+      const fair = fairForLine(books, { method, reference, minBooks, exclude: book, mode: fairMode, weighted });
       if (!fair) continue;
+      if (maxWidth != null && fair.width != null && fair.width > maxWidth) continue; // priced off a market too wide to trust
       for (const [outcome, p] of outcomes) {
         const prob = fair.probs.get(outcome);
         const ev = expectedValue(prob, p.price);
@@ -58,6 +60,7 @@ export function findEv(events, prices, {
           fair_source: fair.source,
           fair_books: fair.n_books,
           ref_hold: fair.hold,
+          width: fair.width,
           ref_price: ref ? ref.price : null,
           age_min: ageMin,
           link: p.link ?? null,
