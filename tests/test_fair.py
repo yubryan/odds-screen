@@ -106,3 +106,21 @@ def test_ev_skips_bets_priced_off_wide_markets(snap_fixture=None):
     rows = find_ev({"e": ev}, prices, bettable={"draftkings"}, reference="pinnacle", min_ev=-1, now=now)
     assert rows and all(round(r["width"]) == 40 for r in rows)
     assert not find_ev({"e": ev}, prices, bettable={"draftkings"}, reference="pinnacle", min_ev=-1, now=now, max_width=30)
+
+
+def test_bad_prices_never_break_pricing(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from oddscreen.ev import find_ev
+    from oddscreen.fair import market_width
+    from oddscreen.store import Store
+    assert market_width([1.0, 1.9]) is None and market_width([0.0, 2.0]) is None
+    store = Store(tmp_path / "t.db")
+    when = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
+    store.save_fetch("nba", [{"id": "e", "commence_time": when, "home_team": "H", "away_team": "A", "bookmakers": [
+        {"key": b, "markets": [{"key": "totals", "outcomes": [{"name": "Over", "price": po, "point": 220.5},
+                                                              {"name": "Under", "price": pu, "point": 220.5}]}]}
+        for b, po, pu in (("pinnacle", 1.95, 1.87), ("draftkings", 1.0, 1.91), ("novig", 2.02, 0.0))]}],
+        markets=["totals"], books=["x"])
+    _, events, prices = store.snapshot("nba")
+    assert all(p.price > 1 for p in prices) and len(prices) == 4  # DK Over 1.0 and NoVig Under 0.0 dropped
+    find_ev(events, prices, bettable={"draftkings", "novig"}, reference="pinnacle", min_ev=-1, now=datetime.now(timezone.utc))

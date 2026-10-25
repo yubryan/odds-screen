@@ -143,6 +143,8 @@ class Store:
                     for mk in bm.get("markets", []):
                         updated = mk.get("last_update") or bm.get("last_update")
                         for o in mk.get("outcomes", []):
+                            if not (isinstance(o.get("price"), (int, float)) and o["price"] > 1):
+                                continue  # a suspended/placeholder price (1.0 or less) isn't a bettable quote
                             rows.append((
                                 fetch_id, ev["id"], bm["key"], mk["key"], o["name"], o.get("description"),
                                 o.get("point"), o["price"], updated,
@@ -213,7 +215,7 @@ class Store:
         with self.conn() as c:
             rows = c.execute(
                 "SELECT p.*, f.fetched_at FROM prices p JOIN fetches f ON f.id = p.fetch_id"
-                f" WHERE p.fetch_id IN ({_in(fetch_ids)})", fetch_ids,
+                f" WHERE p.fetch_id IN ({_in(fetch_ids)}) AND p.price > 1", fetch_ids,
             ).fetchall()
         return [_row_to_price(r) for r in rows]
 

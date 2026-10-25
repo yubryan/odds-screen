@@ -245,3 +245,22 @@ test("Kambi books share one down-weighted vote; width filters wide markets; the 
   assert.equal(Math.round(marketWidth([d(-110), d(-110)])), 20);
   assert.equal(Math.round(marketWidth([d(125), d(-165)])), 40);
 });
+
+
+test("a book posting a price of 1.0 (or 0) is skipped instead of breaking the pull", async () => {
+  const { marketWidth } = await import("../../web/js/engine/fair.js");
+  const { findEv } = await import("../../web/js/engine/ev.js");
+  assert.equal(marketWidth([1.0, 1.9]), null);
+  assert.equal(marketWidth([NaN, 1.9]), null);
+  const store = new Store();
+  const when = new Date(Date.now() + 3 * 3600e3).toISOString();
+  store.saveFetch("nba", [{ id: "e", commence_time: when, home_team: "H", away_team: "A", bookmakers: [
+    ["pinnacle", 1.95, 1.87], ["draftkings", 1.0, 1.91], ["novig", 2.02, 0]].map(([key, o, u]) => ({ key, markets: [{ key: "totals", outcomes: [
+      { name: "Over", price: o, point: 220.5 }, { name: "Under", price: u, point: 220.5 }] }] })) }], { markets: ["totals"], books: ["x"] });
+  // even a bad price already stored on the device is screened out
+  store.pricesByFetch.get(1).push({ fetch_id: 1, event_id: "e", book: "betmgm", market: "totals", outcome: "Over", description: null, point: 220.5, price: 1 });
+  const { events, prices } = store.snapshot("nba");
+  assert.ok(prices.every((p) => p.price > 1));
+  assert.equal(prices.length, 4);
+  assert.doesNotThrow(() => findEv(events, prices, { bettable: new Set(["draftkings", "novig"]), reference: "pinnacle", minEv: -1, now: new Date() }));
+});

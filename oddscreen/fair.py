@@ -20,10 +20,15 @@ class FairLine:
     width: float | None = None  # market width in cents (median across sources for a consensus)
 
 
+def is_quote(decimal: float) -> bool:
+    """A usable decimal price: finite and paying more than the stake back."""
+    return decimal == decimal and decimal not in (float("inf"), float("-inf")) and decimal > 1
+
+
 def market_width(decimals: list[float]) -> float | None:
     """Gap between the two sides in American-odds cents: -110/-110 is 20,
     +125/-165 is 40. Wide markets mean the book is unsure of its own price."""
-    if len(decimals) != 2:
+    if len(decimals) != 2 or not all(is_quote(d) for d in decimals):
         return None
     a, b = (decimal_to_american(d) for d in decimals)
     if a < 0 and b < 0:

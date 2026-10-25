@@ -86,7 +86,7 @@ const post = (path, body) => api(path, {
 });
 
 function odds(dec) {
-  if (dec == null) return "–";
+  if (dec == null || !Number.isFinite(dec) || dec <= 1) return "–";
   if (state.fmt === "decimal") return dec.toFixed(2);
   const r = Math.round(dec >= 2 ? (dec - 1) * 100 : -100 / (dec - 1));
   return r > 0 ? `+${r}` : `${r}`;

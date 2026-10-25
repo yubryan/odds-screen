@@ -7,6 +7,9 @@ import { decimalToAmerican, devig, overround } from "./odds_math.js";
 
 export const FAIR_MODES = ["auto", "pinnacle", "consensus"];
 
+/** A usable decimal price: finite and paying more than the stake back. */
+export const isQuote = (d) => Number.isFinite(d) && d > 1;
+
 const sameKeys = (m, sorted) => {
   const keys = [...m.keys()].sort();
   return keys.length === sorted.length && keys.every((k, i) => k === sorted[i]);
@@ -15,7 +18,7 @@ const sameKeys = (m, sorted) => {
 /** Gap between the two sides in American-odds cents: -110/-110 is 20,
  * +125/-165 is 40. Wide markets mean the book is unsure of its own price. */
 export function marketWidth(decimals) {
-  if (decimals.length !== 2) return null;
+  if (decimals.length !== 2 || !decimals.every(isQuote)) return null;
   const [a, b] = decimals.map(decimalToAmerican);
   if (a < 0 && b < 0) return -a - b - 200;
   if (a > 0 && b > 0) return 200 - a - b;

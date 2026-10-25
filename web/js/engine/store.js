@@ -10,6 +10,8 @@
 
 import { parseTime } from "./models.js";
 
+const isQuote = (d) => Number.isFinite(d) && d > 1;
+
 export const HISTORY_DAYS = 14;
 
 /** (event, book, market, outcome, description) */
@@ -61,6 +63,7 @@ export class Store {
         for (const mk of bm.markets ?? []) {
           const updated = mk.last_update ?? bm.last_update ?? null;
           for (const o of mk.outcomes ?? []) {
+            if (!isQuote(o.price)) continue; // a suspended/placeholder price (1.0 or less) isn't a bettable quote
             rows.push({
               fetch_id: fetch.id, event_id: ev.id, book: bm.key, market: mk.key, outcome: o.name,
               description: o.description ?? null, point: o.point ?? null, price: o.price, last_update: updated,
@@ -177,7 +180,8 @@ export class Store {
       const at = byId.get(id)?.fetched_at ?? null;
       const markets = sel.get(id);
       for (const r of this.pricesByFetch.get(id) ?? []) {
-        if (!markets || markets.has(r.market)) out.push({ ...r, fetched_at: at });
+        // isQuote also screens out bad prices saved before ingestion filtered them
+        if ((!markets || markets.has(r.market)) && isQuote(r.price)) out.push({ ...r, fetched_at: at });
       }
     }
     return out;
