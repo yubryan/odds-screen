@@ -1,7 +1,7 @@
 // Team logos/colors and player headshots from the bundled ESPN snapshot
 // (web/data/media.json, built by tools/build_media.py). Port of oddscreen/media.py.
 
-const LEAGUE = { nfl: "nfl", nba: "nba", ncaab: "mens-college-basketball" };
+const LEAGUE = { nfl: "nfl", nba: "nba", ncaab: "mens-college-basketball", soccer: "soccer" };
 const SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv", "v"]);
 
 /** 'Kenneth Walker III' / 'Amon-Ra St. Brown' -> comparable key. */
@@ -30,6 +30,31 @@ export function matchTeam(name, teams) {
   return best;
 }
 
+// Club-name noise that differs between The Odds API and ESPN ("FC", "1.", "Mainz 05").
+const CLUB_WORDS = new Set(["fc", "afc", "cf", "sc", "sv", "fsv", "fk", "ac", "rc", "ca", "club", "de", "la", "and", "1", "04", "05", "07"]);
+// Names that share no words with ESPN's (normalized Odds API name -> normalized ESPN name)
+const SOCCER_ALIASES = { "1 fc koln": "fc cologne", "hamburger sv": "hamburg sv", "slavia praha": "slavia prague" };
+const ASCII = { "ø": "o", "Ø": "O", "æ": "ae", "Æ": "AE", "ß": "ss", "ł": "l", "Ł": "L", "đ": "d" }; // no NFKD decomposition
+
+function clubWords(name) {
+  const n = norm(String(name || "").replace(/[øØæÆßłŁđ]/g, (c) => ASCII[c]).replace(/[/&]/g, " "));
+  return (SOCCER_ALIASES[n] ?? n).split(" ").filter((w) => w && !CLUB_WORDS.has(w));
+}
+
+/** Odds API club -> ESPN club: same words (ignoring "FC" and the like) on the
+ * full or short name, else the one club whose words all appear in the other
+ * name ("Athletic Bilbao" ~ ESPN "Athletic", "Bournemouth" ~ "AFC Bournemouth"). */
+export function matchClub(name, teams) {
+  const words = clubWords(name);
+  const key = [...words].sort().join(" ");
+  const names = (t) => [t.display, t.nickname].map(clubWords).filter((w) => w.length);
+  const exact = teams.find((t) => names(t).some((w) => [...w].sort().join(" ") === key));
+  if (exact || !words.length) return exact ?? null;
+  const contains = (a, b) => a.every((w) => b.includes(w));
+  const loose = teams.filter((t) => names(t).some((w) => contains(w, words) || contains(words, w)));
+  return loose.length === 1 ? loose[0] : null;
+}
+
 export class Media {
   constructor(data) {
     this.sports = {};
@@ -45,7 +70,7 @@ export class Media {
 
   team(sport, name) {
     const k = `${sport}\u0000${name}`;
-    if (!this.cache.has(k)) this.cache.set(k, matchTeam(name, this.sports[sport]?.teams ?? []));
+    if (!this.cache.has(k)) this.cache.set(k, (sport === "soccer" ? matchClub : matchTeam)(name, this.sports[sport]?.teams ?? []));
     return this.cache.get(k);
   }
 

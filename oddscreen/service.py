@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
-from .config import BOOKS, MAIN_MARKETS, PROP_MARKETS, SPORTS, is_preseason, props_cost_per_event, refresh_cost
+from .config import BOOKS, PROP_MARKETS, SPORTS, is_preseason, props_cost_per_event, refresh_cost, sport_markets
 from .media import Media
 from .odds_api import OddsAPIClient, OddsAPIError
 from .store import Store, parse_time
@@ -53,15 +53,16 @@ def refresh_sport(store: Store, client: OddsAPIClient, sport: str, media: Media 
     feeds = sorted({e["sport_key"] for e in upcoming_events(client, sport)})
     if not feeds:
         raise RefreshRefused(f"No upcoming {_title(sport)} games listed, so no credits were spent")
-    _check_quota(store, refresh_cost() * len(feeds))
+    markets = sport_markets(sport)
+    _check_quota(store, refresh_cost(markets=markets) * len(feeds))
 
     now = datetime.now(timezone.utc)
     payload, cost, used = [], 0, None
     for key in feeds:
-        batch, used = client.odds(key, MAIN_MARKETS, BOOKS)
+        batch, used = client.odds(key, markets, BOOKS)
         payload += [{**e, "sport_key": e.get("sport_key") or key} for e in batch]
         cost += used.last or 0
-    fetch_id = store.save_fetch(sport, payload, markets=MAIN_MARKETS, books=BOOKS, usage=asdict(used), fetched_at=now)
+    fetch_id = store.save_fetch(sport, payload, markets=markets, books=BOOKS, usage=asdict(used), fetched_at=now)
     if media:
         media.ensure_teams(sport)
     return {"fetch_id": fetch_id, "events": len(payload), "usage": asdict(used), "cost": cost, "feeds": feeds}

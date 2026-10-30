@@ -4,7 +4,7 @@
 // answers the same /api/... requests the Python server used to.
 
 import {
-  BOOK_COLORS, BOOK_TITLES, DEFAULT_BOOKS, MAIN_MARKETS, PREVIOUS_DEFAULT_BOOKS, PROP_MARKETS, REFERENCE_BOOK,
+  BOOK_COLORS, BOOK_TITLES, DEFAULT_BOOKS, LEAGUE_TITLES, MAIN_MARKETS, PREVIOUS_DEFAULT_BOOKS, PROP_MARKETS, REFERENCE_BOOK,
   marketTitle, refreshCost, withReference,
 } from "./engine/config.js";
 import { Media } from "./engine/media.js";
@@ -21,7 +21,7 @@ const DEFAULTS = {
   method: "power", minEv: 0, kelly: 0.25, bankroll: 1000, minBooks: 3,
   market: "spreads", maxMiss: 5, maxHold: 5, stake: 100,
   maxStakePct: 1, parlayView: "slip", showOpen: false, evWindow: "all", fairMode: "auto", weighted: true, maxWidth: 40,
-  pullMarkets: ["h2h", "spreads", "totals"], propPull: {},
+  pullMarkets: ["h2h", "spreads", "totals"], propPull: {}, league: "all", pullLeagues: {},
   gen: { sports: ["nfl"], kind: "all", minLegs: 2, maxLegs: 4, minOdds: "", maxOdds: "", minLegEv: 0, boost: 0, sort: "ev", maxReuse: 3 },
 };
 const TABS = ["ev", "screen", "middles", "lowhold", "parlays", "settings"];
@@ -158,21 +158,34 @@ async function loadMedia(sport = state.sport) {
   try { media[sport] = await api(`/api/media?sport=${sport}`); } catch { media[sport] = { teams: {}, players: {} }; }
 }
 const ensureMedia = (sports) => Promise.all([...new Set(sports)].filter((s) => !media[s]).map((s) => loadMedia(s)));
-const preTag = (r) => (r.preseason ? `<span class="tag pre" title="NBA preseason">PRE</span>` : "");
+// soccer badges each game with its league while every league is showing
+const preTag = (r) => (r.preseason ? `<span class="tag pre" title="NBA preseason">PRE</span>`
+  : LEAGUE_TITLES[r.league] && state.league === "all" ? `<span class="tag lg">${esc(LEAGUE_TITLES[r.league])}</span>` : "");
+
+// Soccer lists the home side first ("Chelsea vs Arsenal"); US sports "Away @ Home".
+const homeFirst = (sport = state.sport) => sport === "soccer";
+function gameName(r, sport = state.sport, short = true) {
+  const n = (t) => (short ? teamShort(t, sport) : t);
+  return homeFirst(sport) ? `${n(r.home)} vs ${n(r.away)}` : `${n(r.away)} @ ${n(r.home)}`;
+}
+const logoPair = (r, cls = "", sport = state.sport) =>
+  homeFirst(sport) ? teamLogo(r.home, cls, sport) + teamLogo(r.away, cls, sport) : teamLogo(r.away, cls, sport) + teamLogo(r.home, cls, sport);
+/** Icon for a non-team outcome: Over, Under, or a soccer Draw. */
+const outcomeBadge = (outcome, attrs = "") => `<span class="ou-badge" ${attrs}>${outcome === "Over" ? "O" : outcome === "Draw" ? "D" : "U"}</span>`;
 
 // ---- shared cells -----------------------------------------------------------
 
 function matchupCell(r, sport = state.sport) {
   return `<div class="matchup" title="${esc(r.event)}">
-    <div class="logo-pair">${teamLogo(r.away, "", sport)}${teamLogo(r.home, "", sport)}</div>
-    <div><div class="mu-names">${esc(teamShort(r.away, sport))} @ ${esc(teamShort(r.home, sport))}${preTag(r)}</div><span class="sub">${kickoff(r.commence_time)}</span></div>
+    <div class="logo-pair">${logoPair(r, "", sport)}</div>
+    <div><div class="mu-names">${esc(gameName(r, sport))}${preTag(r)}</div><span class="sub">${kickoff(r.commence_time)}</span></div>
   </div>`;
 }
 
 // a player's name/photo opens every prop for that game on the Odds Screen
 const propLink = (r, inner) =>
   `<button class="prop-link" data-show-props="${esc(r.event_id)}" data-player="${esc(r.player)}" data-market="${esc(r.market)}" data-point="${r.point ?? ""}"
-    title="See all props for ${esc(teamShort(r.away))} @ ${esc(teamShort(r.home))}">${inner}</button>`;
+    title="See all props for ${esc(gameName(r))}">${inner}</button>`;
 
 function betCell(r) {
   if (r.is_prop) {
@@ -180,7 +193,7 @@ function betCell(r) {
       <span class="sub">${esc(r.outcome)} ${esc(point(r.point, false))} · ${esc(r.market_title)}</span></div>`)}</div>`;
   }
   const team = r.outcome === r.home || r.outcome === r.away;
-  const icon = team ? teamLogo(r.outcome, "lg") : `<span class="ou-badge">${r.outcome === "Over" ? "O" : "U"}</span>`;
+  const icon = team ? teamLogo(r.outcome, "lg") : outcomeBadge(r.outcome);
   return `<div class="bet">${icon}<div><b>${esc(r.selection)}</b><span class="sub">${esc(r.market_title)}</span></div></div>`;
 }
 
@@ -228,6 +241,7 @@ document.addEventListener("click", (e) => {
 const LEAGUE_ICON = {
   nfl: `<img src="https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png" alt="">`,
   nba: `<img src="https://a.espncdn.com/i/teamlogos/leagues/500/nba.png" alt="">`,
+  soccer: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5" fill="#f4f4f4" stroke="#222" stroke-width="1"/><path d="M12 8.2l3.6 2.6-1.4 4.2H9.8l-1.4-4.2z" fill="#222"/><path d="M12 8.2V3.4M15.6 10.8l4.4-1.6M14.2 15l2.8 3.8M9.8 15L7 18.8M8.4 10.8L4 9.2" stroke="#222" stroke-width="1"/></svg>`,
   ncaab: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5" fill="#e8762c"/><g fill="none" stroke="#5a2a0c" stroke-width="1.3"><path d="M2.5 12h19M12 2.5v19"/><path d="M5.3 5.3c3 3 3 10.4 0 13.4M18.7 5.3c-3 3-3 10.4 0 13.4"/></g></svg>`,
 };
 
@@ -241,15 +255,18 @@ function renderHeader() {
   $("#credits-bar").style.width = u ? `${Math.max(2, (u.remaining / total) * 100)}%` : "0";
   $("#credits-bar").parentElement.classList.toggle("low", !!u && u.remaining < 60);
   $("#credits").title = u ? `${u.used} used this month · last call cost ${u.last} · as of ${new Date(u.at).toLocaleString()}` : "Refresh once to see your balance";
-  const cost = sport.refresh_cost > meta.refresh_cost ? `≤${sport.refresh_cost}` : sport.refresh_cost;
+  const cost = sport.refresh_cost > sport.feed_cost ? `≤${sport.refresh_cost}` : sport.refresh_cost;
   $("#refresh-main").innerHTML = `↻ <span class="lbl">Main lines</span><span class="lbl-s">Lines</span> <span class="cost">${cost} cr</span>`;
-  $("#refresh-main").title = sport.refresh_cost > meta.refresh_cost
-    ? `${meta.refresh_cost} credits per feed with upcoming games (regular season + preseason). Empty feeds are skipped for free.` : "";
+  $("#refresh-main").title = sport.leagues.length
+    ? `${sport.feed_cost} credits per league you pull. Leagues with no upcoming games are skipped for free.`
+    : sport.refresh_cost > sport.feed_cost
+      ? `${sport.feed_cost} credits per feed with upcoming games (regular season + preseason). Empty feeds are skipped for free.` : "";
   $("#refresh-props").innerHTML = `＋ <span class="lbl">Player props</span><span class="lbl-s">Props</span> <span class="cost">≤${sport.props_cost_per_event}/gm</span>`;
+  $("#refresh-props").style.display = sport.prop_markets.length ? "" : "none"; // soccer: main lines only for now
   document.body.classList.toggle("on-settings", state.tab === "settings");
   $("#freshness").innerHTML =
     `<span><span class="dot ${freshClass(sport.last_fetch)}"></span>Main lines <b>${ago(sport.last_fetch)}</b></span>` +
-    `<span><span class="dot ${freshClass(sport.last_props_fetch)}"></span>Props <b>${ago(sport.last_props_fetch)}</b></span>`;
+    (sport.prop_markets.length ? `<span><span class="dot ${freshClass(sport.last_props_fetch)}"></span>Props <b>${ago(sport.last_props_fetch)}</b></span>` : "");
   document.querySelectorAll("[data-tab]").forEach((b) => b.classList.toggle("active", b.dataset.tab === state.tab));
   document.querySelectorAll("#fmt button").forEach((b) => b.classList.toggle("active", b.dataset.fmt === state.fmt));
   const bettable = meta.books.filter((b) => !b.reference);
@@ -385,7 +402,11 @@ $("#credits").addEventListener("click", () => { location.hash = "settings"; });
 
 const ALL_BOOK_KEYS = Object.keys(BOOK_TITLES);
 const creditsLeft = () => meta.usage?.remaining ?? null;
-const pullMarkets = () => MAIN_MARKETS.filter((m) => state.pullMarkets.includes(m));
+const sportMarkets = (sport = sportMeta()) => sport.markets.map((m) => m.key);
+const pullMarkets = () => sportMarkets().filter((m) => state.pullMarkets.includes(m));
+const hasProps = () => sportMeta().prop_markets.length > 0;
+/** Leagues a pull covers (soccer); every league unless some were left out. */
+const pullLeagues = (sport = sportMeta()) => sport.leagues.map((l) => l.key).filter((k) => (state.pullLeagues[sport.id] ?? [k]).includes(k));
 const propMarkets = (sport = state.sport) => PROP_MARKETS[sport].filter((m) => (state.propPull[sport] ?? PROP_MARKETS[sport]).includes(m));
 
 /** Book checkboxes shared by the pull pickers and Settings; edits the saved fetch list. */
@@ -408,23 +429,30 @@ const tierNote = (n) => `${n} book${n === 1 ? "" : "s"} = ${Math.ceil(n / 10)} b
 
 function openPullSheet() {
   const sport = sportMeta();
-  const feeds = Math.round(sport.refresh_cost / meta.refresh_cost); // NBA: regular season + preseason
+  const picksLeagues = sport.leagues.length > 0;
   const draw = () => {
     const markets = pullMarkets();
+    const leagues = pullLeagues(sport);
+    // soccer: one charge per chosen league; NBA: regular season + preseason
+    const feeds = picksLeagues ? leagues.length : Math.round(sport.refresh_cost / sport.feed_cost);
     const books = withReference(config.books);
     const perFeed = refreshCost(books, markets);
+    const total = markets.length ? perFeed * feeds : 0;
     const left = creditsLeft();
     $("#modal-title").textContent = `Pull main lines · ${sport.title}`;
     $("#modal-body").innerHTML = `
+      ${picksLeagues ? `<h4>Leagues</h4>
+      <div class="chips">${sport.leagues.map((l) => `<button class="chip ${leagues.includes(l.key) ? "on" : ""}" data-pull-league="${l.key}">${esc(l.title)}</button>`).join("")}</div>
+      <p class="foot-note">Each league is billed separately. Leagues you skip keep showing their last pull, and a league with no upcoming games costs nothing.</p>` : ""}
       <h4>Markets</h4>
-      <div class="chips">${MAIN_MARKETS.map((m) => `<button class="chip ${markets.includes(m) ? "on" : ""}" data-pull-market="${m}">${marketTitle(m)}</button>`).join("")}</div>
-      <p class="foot-note">Each market is 1 credit per billing group. Markets you skip keep showing their last pull.</p>
+      <div class="chips">${sport.markets.map((m) => `<button class="chip ${markets.includes(m.key) ? "on" : ""}" data-pull-market="${m.key}">${esc(m.title)}</button>`).join("")}</div>
+      <p class="foot-note">Each market is 1 credit per billing group${picksLeagues ? " per league" : ""}. Markets you skip keep showing their last pull.${sport.id === "soccer" ? " Soccer moneylines are 3-way: home, draw, away." : ""}</p>
       <h4>Books</h4>${bookChecklist()}
       <p class="foot-note">${tierNote(books.length)} Books you leave out won't appear until you pull them again.</p>
       <div class="plan-foot">
-        <span class="plan-cost"><b>${markets.length * Math.ceil(books.length / 10) * feeds > 0 ? `${perFeed}${feeds > 1 ? `–${perFeed * feeds}` : ""}` : 0}</b> credits${feeds > 1 ? " (one charge per feed with upcoming games: regular season and preseason)" : ""}${left != null ? ` · <b>${left}</b> left` : ""}</span>
+        <span class="plan-cost"><b>${picksLeagues ? `≤${total}` : total && feeds > 1 ? `${perFeed}–${total}` : total}</b> credits${picksLeagues ? ` (${perFeed} per league)` : feeds > 1 ? " (one charge per feed with upcoming games: regular season and preseason)" : ""}${left != null ? ` · <b>${left}</b> left` : ""}</span>
         <span style="display:flex;gap:8px"><button class="btn btn-ghost" id="pull-cancel">Cancel</button>
-          <button class="btn btn-primary" id="pull-go" ${markets.length ? "" : "disabled"}>Pull ${perFeed}${feeds > 1 ? "+" : ""} cr</button></span>
+          <button class="btn btn-primary" id="pull-go" ${markets.length && feeds ? "" : "disabled"}>Pull ${picksLeagues ? `≤${total}` : `${perFeed}${feeds > 1 ? "+" : ""}`} cr</button></span>
       </div>`;
   };
   draw();
@@ -434,6 +462,15 @@ function openPullSheet() {
       const set_ = new Set(state.pullMarkets);
       if (set_.has(m.dataset.pullMarket)) set_.delete(m.dataset.pullMarket); else set_.add(m.dataset.pullMarket);
       state.pullMarkets = MAIN_MARKETS.filter((x) => set_.has(x));
+      saveSettings();
+      draw();
+      return;
+    }
+    const lg = e.target.closest("[data-pull-league]");
+    if (lg) {
+      const set_ = new Set(pullLeagues(sport));
+      if (set_.has(lg.dataset.pullLeague)) set_.delete(lg.dataset.pullLeague); else set_.add(lg.dataset.pullLeague);
+      state.pullLeagues = { ...state.pullLeagues, [sport.id]: sport.leagues.map((l) => l.key).filter((k) => set_.has(k)) };
       saveSettings();
       draw();
       return;
@@ -453,9 +490,11 @@ async function pullMainLines() {
   btn.disabled = true;
   btn.textContent = "Fetching…";
   try {
-    const r = await post(`/api/refresh/${state.sport}`, { markets: pullMarkets() });
-    const feeds = r.feeds?.length > 1 ? ` (${r.feeds.length} feeds incl. preseason)` : r.feeds?.[0]?.endsWith("_preseason") ? " (preseason)" : "";
-    const which = r.markets?.length < MAIN_MARKETS.length ? ` · ${r.markets.map(marketTitle).join(", ")} only` : "";
+    const picks = sportMeta().leagues.length > 0;
+    const r = await post(`/api/refresh/${state.sport}`, { markets: pullMarkets(), ...(picks ? { leagues: pullLeagues() } : {}) });
+    const feeds = picks ? ` (${r.feeds.map((k) => LEAGUE_TITLES[k] ?? k).join(", ") || "no league had upcoming games"})`
+      : r.feeds?.length > 1 ? ` (${r.feeds.length} feeds incl. preseason)` : r.feeds?.[0]?.endsWith("_preseason") ? " (preseason)" : "";
+    const which = r.markets?.length < sportMarkets().length ? ` · ${r.markets.map(marketTitle).join(", ")} only` : "";
     toast(`${sportMeta().title} main lines: ${r.events} games${feeds}${which} · ${r.cost} credits · ${r.usage.remaining} left`);
   } catch (err) {
     toast(/quota/i.test(err.message) ? `${err.message} — see Settings → Credits to upgrade.` : err.message, true);
@@ -558,7 +597,13 @@ const field = (key, label, step, unit = "") =>
 const methodSelect = () =>
   `<label class="field">De-vig<select data-key="method">${meta.methods.map((m) =>
     `<option value="${m}" ${m === state.method ? "selected" : ""}>${m.replace("_", " ")}</option>`).join("")}</select></label>`;
-const kindSeg = () =>
+// soccer: All leagues, or just one
+const leagueSeg = () => {
+  const lgs = sportMeta().leagues;
+  return lgs.length ? `<div class="seg" data-seg="league">${[{ key: "all", title: "All leagues" }, ...lgs].map((l) =>
+    `<button data-val="${l.key}" class="${state.league === l.key ? "active" : ""}">${esc(l.title)}</button>`).join("")}</div>` : "";
+};
+const kindSeg = () => !hasProps() ? "" :
   `<div class="seg" data-seg="kind">${[["all", "All"], ["main", "Main lines"], ["props", "Player props"]].map(([k, l]) =>
     `<button data-val="${k}" class="${state.kind === k ? "active" : ""}">${l}</button>`).join("")}</div>`;
 
@@ -567,11 +612,11 @@ function renderControls() {
   if (state.tab === "settings") {
     c.innerHTML = "";
   } else if (state.tab === "ev") {
-    c.innerHTML = kindSeg() + methodSelect() + field("minEv", "Min EV", 0.5, "%") + field("kelly", "Kelly ×", 0.05) +
+    c.innerHTML = leagueSeg() + kindSeg() + methodSelect() + field("minEv", "Min EV", 0.5, "%") + field("kelly", "Kelly ×", 0.05) +
       field("bankroll", "Bankroll", 100, "$") + field("minBooks", "Consensus books", 1) + field("maxWidth", "Max width", 5, "¢");
   } else if (state.tab === "screen") {
-    const markets = [...meta.markets, { key: "props", title: "Player Props" }];
-    c.innerHTML = `<div class="seg" data-seg="market">${markets.map((m) =>
+    const markets = [...sportMeta().markets, ...(hasProps() ? [{ key: "props", title: "Player Props" }] : [])];
+    c.innerHTML = leagueSeg() + `<div class="seg" data-seg="market">${markets.map((m) =>
       `<button data-val="${m.key}" class="${m.key === state.market ? "active" : ""}">${m.title}</button>`).join("")}</div>` + methodSelect() +
       `<button class="chip ${state.showOpen ? "on" : ""}" data-toggle-open>Opening odds</button>`;
   } else if (state.tab === "parlays") {
@@ -579,9 +624,9 @@ function renderControls() {
       `<button data-val="${k}" class="${state.parlayView === k ? "active" : ""}">${l}</button>`).join("")}</div>` + methodSelect() +
       field("minBooks", "Consensus books", 1);
   } else if (state.tab === "middles") {
-    c.innerHTML = kindSeg() + field("maxMiss", "Max cost if miss", 0.5, "%") + field("stake", "Total stake", 10, "$");
+    c.innerHTML = leagueSeg() + kindSeg() + field("maxMiss", "Max cost if miss", 0.5, "%") + field("stake", "Total stake", 10, "$");
   } else {
-    c.innerHTML = kindSeg() + field("maxHold", "Max hold", 0.5, "%");
+    c.innerHTML = leagueSeg() + kindSeg() + field("maxHold", "Max hold", 0.5, "%");
   }
 }
 
@@ -618,10 +663,13 @@ async function load() {
     return;
   }
   const s = state.sport;
-  const k = `&kind=${state.kind}`;
+  // a market or league this sport doesn't have (Spreads on Soccer, EPL on NFL) falls back to one it does
+  const sport = sportMeta();
+  if (state.market !== "props" ? !sportMarkets(sport).includes(state.market) : !hasProps()) state.market = sportMarkets(sport)[0];
+  const k = `&kind=${hasProps() ? state.kind : "all"}${sport.leagues.some((l) => l.key === state.league) ? `&league=${state.league}` : ""}`;
   const urls = {
     ev: `/api/ev?sport=${s}${k}&method=${state.method}&min_ev=${state.minEv / 100}&kelly=${state.kelly}&bankroll=${state.bankroll}&min_books=${state.minBooks}&fair=${state.fairMode}&weighted=${state.weighted ? 1 : 0}&max_width=${state.maxWidth ?? ""}`,
-    screen: `/api/screen?sport=${s}&market=${state.market}&method=${state.method}`,
+    screen: `/api/screen?sport=${s}${k.replace(/&kind=\w+/, "")}&market=${state.market}&method=${state.method}`,
     middles: `/api/middles?sport=${s}${k}&stake=${state.stake}`,
     lowhold: `/api/lowhold?sport=${s}${k}`,
   };
@@ -655,7 +703,7 @@ function renderContent() {
     return;
   }
   if (!data.has_data) {
-    const what = state.kind === "props" || state.market === "props" ? "player props" : "odds";
+    const what = hasProps() && (state.kind === "props" || state.market === "props") ? "player props" : "odds";
     $("#content").innerHTML = emptyState(`No ${sportMeta().title} ${what} yet`,
       what === "odds"
         ? `Click <b>Main lines</b> above to pull every game (${sportMeta().refresh_cost} credits at most).`
@@ -703,7 +751,8 @@ function fairModeSeg() {
 
 function evFilterBar(rows) {
   const games = evGameList(rows);
-  const label = !evGames ? "All games" : evGames.size === 1 ? `${teamShort(games.find((g) => evGames.has(g.event_id))?.away ?? "")} @ ${teamShort(games.find((g) => evGames.has(g.event_id))?.home ?? "")}` : `${evGames.size} games`;
+  const one = evGames?.size === 1 ? games.find((g) => evGames.has(g.event_id)) : null;
+  const label = !evGames ? "All games" : one ? gameName(one) : `${evGames.size} games`;
   return `<div class="ev-filters">
     ${fairModeSeg()}
     <div class="seg">${EV_WINDOWS.map(([k, l]) => {
@@ -720,8 +769,8 @@ function renderGamesPopover() {
   $("#games-pop").innerHTML =
     `<div class="pop-actions"><button class="btn btn-sm" data-games="all">All games</button><button class="btn btn-sm btn-ghost" data-games="none">Clear</button></div>` +
     games.map((g) => `<label class="game-opt ${g.n ? "" : "muted"}"><input type="checkbox" value="${esc(g.event_id)}" ${!evGames || evGames.has(g.event_id) ? "checked" : ""}>
-      <span class="logo-pair">${teamLogo(g.away)}${teamLogo(g.home)}</span>
-      <span class="g-name">${esc(teamShort(g.away))} @ ${esc(teamShort(g.home))}${preTag(g)}<span class="sub">${kickoff(g.commence_time)}</span></span>
+      <span class="logo-pair">${logoPair(g)}</span>
+      <span class="g-name">${esc(gameName(g))}${preTag(g)}<span class="sub">${kickoff(g.commence_time)}</span></span>
       <span class="g-n">${g.n}</span></label>`).join("") +
     `<p class="note">Number = +EV bets in the selected time window.</p>`;
 }
@@ -885,7 +934,7 @@ function renderScreen(data) {
   const spread = state.market === "spreads";
   const books = visibleBooks(data.events.flatMap(allCells));
   return `<div class="events">${data.events.map((ev) => {
-    const mt = meta.markets.find((m) => m.key === state.market).title;
+    const mt = marketTitle(state.market);
     const key = `${ev.id}|${state.market}`;
     const chosen = pickLine(ev, key);
     const built = oddsCells(chosen.rows, books, state.market, spread, (row) => ({
@@ -893,19 +942,19 @@ function renderScreen(data) {
       info: legInfo(ev, { market_title: mt }),
     }), otherLines(ev, chosen), key);
     const rows = chosen.rows.map((row, i) => {
-      const label = state.market === "totals"
-        ? `<div class="bet"><span class="ou-badge">${row.side === "Over" ? "O" : "U"}</span><b>${esc(row.side)}</b></div>`
+      const label = state.market === "totals" || row.side === "Draw"
+        ? `<div class="bet">${outcomeBadge(row.side)}<b>${esc(row.side)}</b></div>`
         : `<div class="bet">${teamLogo(row.side, "lg")}<b>${esc(isMobile() ? teamShort(row.side) : row.side)}</b></div>`;
       return `<tr><td class="side-cell">${label}</td>${built[i].fair}${built[i].open}${built[i].cells}</tr>`;
     }).join("");
     return `<div class="card" data-event="${esc(ev.id)}">
       <div class="event-head">
-        <div class="event-title"><span class="logo-pair">${teamLogo(ev.away, "lg")}${teamLogo(ev.home, "lg")}</span>
-          <div><div class="names">${esc(ev.away)} @ ${esc(ev.home)}${preTag(ev)}</div><span class="sub">${kickoff(ev.commence_time)}</span></div></div>
+        <div class="event-title"><span class="logo-pair">${logoPair(ev, "lg")}</span>
+          <div><div class="names">${esc(gameName(ev, state.sport, false))}${preTag(ev)}</div><span class="sub">${kickoff(ev.commence_time)}</span></div></div>
         <div class="event-actions"><button class="btn btn-sm btn-ghost" data-history="${esc(ev.id)}" data-name="${esc(ev.name)}" data-market="${state.market}">Line history</button></div>
       </div>
       ${lineChips(ev, key, state.market, chosen)}
-      <div class="table-wrap"><table><thead><tr><th>${esc(meta.markets.find((m) => m.key === state.market).title)}</th><th class="num fair-col">Fair</th><th class="num open-col">Open</th>${bookHeaders(books)}</tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>${esc(mt)}</th><th class="num fair-col">Fair</th><th class="num open-col">Open</th>${bookHeaders(books)}</tr></thead><tbody>${rows}</tbody></table></div>
     </div>`;
   }).join("")}</div>
   <p class="foot-note">Books are compared at one line at a time (the one most books post, unless you pick another). A book on a different line shows "@ its line" instead of a price; tap it to compare at that line. Click any price to add that exact bet to your parlay (↗ opens the sportsbook). Green marks the best price at this line. ▲▼ show movement since the previous refresh. Open is the first line this device recorded (${esc(bookMeta(meta.reference).title)} when it posts one); turn on Opening odds in the filters to see every book's opener. ${esc(bookMeta(meta.reference).title)} is shown for reference only.</p>`;
@@ -925,8 +974,8 @@ function renderPropsList(data) {
         : ev.preseason ? `<span class="prop-status">Books don't post preseason props</span>` : `<span class="prop-status">Props not pulled yet</span>`;
     return `<div class="card ${open ? "open" : ""}" data-prop-event="${esc(ev.id)}">
       <div class="event-head">
-        <div class="event-title"><span class="logo-pair">${teamLogo(ev.away, "lg")}${teamLogo(ev.home, "lg")}</span>
-          <div><div class="names">${esc(ev.away)} @ ${esc(ev.home)}${preTag(ev)}</div><span class="sub">${kickoff(ev.commence_time)}</span></div></div>
+        <div class="event-title"><span class="logo-pair">${logoPair(ev, "lg")}</span>
+          <div><div class="names">${esc(gameName(ev, state.sport, false))}${preTag(ev)}</div><span class="sub">${kickoff(ev.commence_time)}</span></div></div>
         <div class="event-actions">${status}
           <button class="btn btn-sm btn-secondary" data-pull="${esc(ev.id)}">${ev.props_fetched_at ? "↻ Refresh" : "Pull props"} <span class="cost">≤${per} cr</span></button>
           ${ev.props_fetched_at ? `<button class="icon-btn" data-toggle="${esc(ev.id)}" aria-label="Expand"><svg class="chev" width="14" height="14" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>` : ""}
@@ -1239,11 +1288,11 @@ function legIcon(leg, small = false) {
   const s = leg.spec, i = leg.info || {};
   if (s.market.startsWith("player_")) return avatar(s.event_id, s.description, small, s.sport);
   if (s.outcome === i.home || s.outcome === i.away) return teamLogo(s.outcome, small ? "" : "lg", s.sport);
-  return `<span class="ou-badge" ${small ? 'style="width:28px;height:28px"' : ""}>${s.outcome === "Over" ? "O" : "U"}</span>`;
+  return outcomeBadge(s.outcome, small ? 'style="width:28px;height:28px"' : "");
 }
 function legSub(leg) {
   const i = leg.info || {}, s = leg.spec;
-  const game = i.home ? `${teamShort(i.away, s.sport)} @ ${teamShort(i.home, s.sport)}` : (i.event || "");
+  const game = i.home ? gameName(i, s.sport) : (i.event || "");
   const mkt = s.market.startsWith("player_") ? i.market_title || "" : "";
   return [mkt, game, i.commence_time ? kickoff(i.commence_time) : ""].filter(Boolean).join(" · ");
 }
@@ -1601,7 +1650,7 @@ const isMobile = () => mq.matches;
 mq.addEventListener?.("change", () => { if (lastData) renderContent(); renderSlip(); });
 
 function matchupInline(r) {
-  return `<span class="m-game">${teamLogo(r.away)}${teamLogo(r.home)}<span>${esc(teamShort(r.away))} @ ${esc(teamShort(r.home))}</span>${preTag(r)}<span class="muted">· ${kickoff(r.commence_time)}</span></span>`;
+  return `<span class="m-game">${logoPair(r)}<span>${esc(gameName(r))}</span>${preTag(r)}<span class="muted">· ${kickoff(r.commence_time)}</span></span>`;
 }
 
 function evCard(r) {
@@ -1850,7 +1899,7 @@ async function showFairDetail(spec) {
   const usedW = d.books.filter((b) => b.used).reduce((a, b) => a + (b.weight ?? 0), 0);
   const modeText = { auto: "Auto (Pinnacle when it posts this line, otherwise the consensus)", pinnacle: "Pinnacle only", consensus: "Consensus" }[d.mode];
   const summary = !f
-    ? `<div class="alert">No fair price at this line. ${d.mode === "pinnacle" ? "Pinnacle doesn't post it." : `Fewer than ${state.minBooks} independent books post both sides of this exact line${d.exclude ? ` (not counting ${esc(bookTitle(d.exclude))})` : ""}.`}</div>`
+    ? `<div class="alert">No fair price at this line. ${d.mode === "pinnacle" ? "Pinnacle doesn't post it." : `Fewer than ${state.minBooks} independent books post ${d.outcomes.length > 2 ? "every outcome" : "both sides"} of this exact line${d.exclude ? ` (not counting ${esc(bookTitle(d.exclude))})` : ""}.`}</div>`
     : `<div class="fd-summary"><div><span class="muted">Fair ${esc(label)}</span><div class="m-big">${odds(1 / f.probs[spec.outcome])}</div><span class="sub">${pct(f.probs[spec.outcome], 1)} to win</span></div>
        <div class="fd-how">${f.source === "consensus"
          ? `Weighted average of <b>${f.n_books}</b> independent books' no-vig prices${d.exclude ? `, leaving out <b>${esc(bookTitle(d.exclude))}</b> (the book being priced)` : ""}.`
@@ -1891,7 +1940,7 @@ async function showHistory({ history: eventId, name, market, desc }) {
   const times = [...new Set(rows.map((r) => r.fetched_at))];
   const books = meta.books.filter((bk) => rows.some((r) => r.book === bk.key));
   const sides = [...new Set(rows.map((r) => r.outcome))];
-  const title = market.startsWith("player_") ? `${name} · ${market.replace("player_", "").replaceAll("_", " ")}` : `${name} · ${meta.markets.find((m) => m.key === market)?.title}`;
+  const title = market.startsWith("player_") ? `${name} · ${market.replace("player_", "").replaceAll("_", " ")}` : `${name} · ${marketTitle(market)}`;
   $("#modal-title").textContent = `${title} · line history`;
   $("#modal-body").onclick = null;
   $("#modal-body").onchange = null;

@@ -1,6 +1,6 @@
 # Odds Screen
 
-An OddJam-style betting toolkit for NFL, NBA (including preseason) and NCAAB. It is a web app that runs entirely on your device, phone or desktop:
+An OddJam-style betting toolkit for NFL, NBA (including preseason), NCAAB and soccer (Premier League, La Liga, Bundesliga, Champions League). It is a web app that runs entirely on your device, phone or desktop:
 
 - **No server and no account.** Odds come straight from [The Odds API](https://the-odds-api.com/) using your own key.
 - **Your data stays on the device.** The key and the odds history live in the browser's storage.
@@ -19,6 +19,8 @@ An OddJam-style betting toolkit for NFL, NBA (including preseason) and NCAAB. It
   - It won't start a refresh your remaining credits can't cover.
   - A multi-game props pull stops early when credits run low and keeps what it already pulled.
   - Every refresh shows its cost.
+
+- **Soccer:** one tab for the Premier League, La Liga, Bundesliga and Champions League, with the 3-way moneyline (home, draw, away) and totals. Games read "Home vs Away". A league switch filters every tool, and the pull sheet lets you pick leagues: each league costs 2 credits (moneyline + total), and a league you skip keeps showing its last pull. Asian quarter-line totals (2.25, 2.75) settle as split stakes in Middles. No player props yet.
 
 Odds history is kept for 14 days.
 

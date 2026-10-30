@@ -158,8 +158,8 @@ def screen(sport: str, market: str = "spreads", method: str = "power", books: st
     if market == "props":
         return {"fetch": fetch, "has_data": bool(events),
                 "events": props_summary(events, prices, store.props_fetched(sport), now=now)}
-    if market not in config.MAIN_MARKETS:
-        raise HTTPException(400, f"market must be 'props' or one of {config.MAIN_MARKETS}")
+    if market not in config.sport_markets(_sport(sport)):
+        raise HTTPException(400, f"market must be 'props' or one of {config.sport_markets(sport)}")
     rows = build_screen(
         events, prices, market=market, bettable=_bettable(books), reference=config.REFERENCE_BOOK,
         method=_method(method), previous=store.previous_prices(sport),

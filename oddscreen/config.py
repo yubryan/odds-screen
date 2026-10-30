@@ -19,6 +19,17 @@ SPORTS: dict[str, dict] = {
     "nfl": {"keys": ["americanfootball_nfl"], "title": "NFL"},
     "nba": {"keys": ["basketball_nba", "basketball_nba_preseason"], "title": "NBA"},
     "ncaab": {"keys": ["basketball_ncaab"], "title": "NCAAB"},
+    # one tab, four leagues: each league is its own feed (billed separately) and
+    # can be left out of a pull; 3-way moneyline (home/draw/away) and totals only
+    "soccer": {
+        "keys": ["soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga", "soccer_uefa_champs_league"],
+        "title": "Soccer", "markets": ["h2h", "totals"], "pick_leagues": True,
+    },
+}
+
+LEAGUE_TITLES = {
+    "soccer_epl": "EPL", "soccer_spain_la_liga": "La Liga", "soccer_germany_bundesliga": "Bundesliga",
+    "soccer_uefa_champs_league": "UCL",
 }
 
 
@@ -29,6 +40,12 @@ def is_preseason(league: str | None) -> bool:
 # Bulk-endpoint markets, fetched for a whole sport in one call.
 MAIN_MARKETS = ["h2h", "spreads", "totals"]
 
+
+def sport_markets(sport: str) -> list[str]:
+    """The main markets a sport offers, in MAIN_MARKETS order."""
+    return SPORTS[sport].get("markets", MAIN_MARKETS)
+
+
 # Core over/under player props. Only available per event (events/{id}/odds),
 # billed per market actually returned.
 _HOOPS_PROPS = ["player_points", "player_rebounds", "player_assists", "player_threes", "player_points_rebounds_assists"]
@@ -36,6 +53,7 @@ PROP_MARKETS: dict[str, list[str]] = {
     "nfl": ["player_pass_yds", "player_rush_yds", "player_reception_yds", "player_receptions", "player_pass_tds"],
     "nba": _HOOPS_PROPS,
     "ncaab": _HOOPS_PROPS,
+    "soccer": [],
 }
 
 MARKET_TITLES = {
@@ -65,6 +83,8 @@ def is_prop(market: str) -> bool:
 
 # ESPN's public site API: team logos/colors and rosters with headshots (no key).
 ESPN_PATHS = {"nfl": "football/nfl", "nba": "basketball/nba", "ncaab": "basketball/mens-college-basketball"}
+# Soccer: logos only (no props, so no rosters), merged across the leagues' ESPN feeds
+ESPN_SOCCER_PATHS = ["soccer/eng.1", "soccer/esp.1", "soccer/ger.1", "soccer/uefa.champions"]
 
 # Sharp book used as the fair-price reference. Never treated as bettable.
 REFERENCE_BOOK = "pinnacle"

@@ -6,16 +6,10 @@ from datetime import datetime
 
 from .config import PROP_MARKETS, is_preseason, is_prop, market_title
 from .fair import fair_for_line
-from .models import Event, Price, is_moneyline, is_spread, is_upcoming, line_of
+from .models import Event, Price, is_spread, is_upcoming, line_of, sides_for
 from .store import PriceKey, price_key
 
 _NO_LINE = object()
-
-
-def sides_for(market: str, event: Event) -> list[str]:
-    if is_moneyline(market) or is_spread(market):
-        return [event.away, event.home]
-    return ["Over", "Under"]
 
 
 def side_point(market: str, line: float | None, side: str, event: Event) -> float | None:

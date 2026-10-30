@@ -8,6 +8,7 @@
 // SQLite version); an optional persistence adapter (IndexedDB in the browser)
 // mirrors every write so the history survives app restarts.
 
+import { SPORTS } from "./config.js";
 import { parseTime } from "./models.js";
 
 const isQuote = (d) => Number.isFinite(d) && d > 1;
@@ -16,6 +17,8 @@ export const HISTORY_DAYS = 14;
 
 /** (event, book, market, outcome, description) */
 export const priceKey = (p) => JSON.stringify([p.event_id, p.book, p.market, p.outcome, p.description ?? ""]);
+
+const leagueScope = (market, league) => `${market}\u0000${league}`;
 
 export class Store {
   constructor(persist = null) {
@@ -42,11 +45,11 @@ export class Store {
 
   // ---- writes -------------------------------------------------------------
 
-  saveFetch(sport, payload, { markets, books, usage = {}, fetchedAt = new Date(), kind = "main", eventId = null }) {
+  saveFetch(sport, payload, { markets, books, usage = {}, fetchedAt = new Date(), kind = "main", eventId = null, feeds = null }) {
     const fetch = {
       id: this.nextId++, sport, fetched_at: fetchedAt.toISOString(), markets: markets.join(","), books: books.join(","),
       n_events: payload.length, credits_last: usage.last ?? null, credits_remaining: usage.remaining ?? null,
-      credits_used: usage.used ?? null, kind, event_id: eventId,
+      credits_used: usage.used ?? null, kind, event_id: eventId, feeds: feeds ? feeds.join(",") : null,
     };
     this.fetches.push(fetch);
     const rows = [];
@@ -137,7 +140,11 @@ export class Store {
     for (let i = this.fetches.length - 1; i >= 0; i--) {
       const f = this.fetches[i];
       if (f.sport !== sport) continue;
-      const scopes = f.kind === "main" ? f.markets.split(",").filter(Boolean).map((m) => ["main", m]) : [[f.kind, f.event_id ?? ""]];
+      // a sport whose leagues are pulled separately (soccer) keeps each league's
+      // latest pull per market: pulling only the EPL leaves La Liga's last pull showing
+      const leagues = SPORTS[sport]?.pickLeagues ? (f.feeds ? f.feeds.split(",") : SPORTS[sport].keys) : null;
+      const scopes = f.kind !== "main" ? [[f.kind, f.event_id ?? ""]]
+        : f.markets.split(",").filter(Boolean).flatMap((m) => (leagues ? leagues.map((lg) => ["main", leagueScope(m, lg)]) : [["main", m]]));
       for (const [kind, sub] of scopes) {
         const scope = `${kind}\u0000${sub}`;
         const n = seen.get(scope) ?? 0;
@@ -169,8 +176,8 @@ export class Store {
     return out;
   }
 
-  /** Price objects for a selection (fetch ids, or Map<id, Set<market>|null>), in
-   * insertion order, with the fetch time attached. */
+  /** Price objects for a selection (fetch ids, or Map<id, Set<market or
+   * market+league scope>|null>), in insertion order, with the fetch time attached. */
   pricesFor(selection) {
     const sel = selection instanceof Map ? selection : new Map([...selection].map((id) => [id, null]));
     const ids = [...sel.keys()].sort((a, b) => a - b);
@@ -181,7 +188,8 @@ export class Store {
       const markets = sel.get(id);
       for (const r of this.pricesByFetch.get(id) ?? []) {
         // isQuote also screens out bad prices saved before ingestion filtered them
-        if ((!markets || markets.has(r.market)) && isQuote(r.price)) out.push({ ...r, fetched_at: at });
+        const wanted = !markets || markets.has(r.market) || markets.has(leagueScope(r.market, this.events.get(r.event_id)?.league));
+        if (wanted && isQuote(r.price)) out.push({ ...r, fetched_at: at });
       }
     }
     return out;

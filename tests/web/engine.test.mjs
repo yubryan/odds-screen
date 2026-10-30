@@ -264,3 +264,97 @@ test("a book posting a price of 1.0 (or 0) is skipped instead of breaking the pu
   assert.equal(prices.length, 4);
   assert.doesNotThrow(() => findEv(events, prices, { bettable: new Set(["draftkings", "novig"]), reference: "pinnacle", minEv: -1, now: new Date() }));
 });
+
+// ---- soccer: 3-way moneylines, totals with Asian lines, leagues pulled separately ----
+
+const SOCCER_LEAGUES = ["soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga", "soccer_uefa_champs_league"];
+const soon = () => new Date(Date.now() + 5 * 3600e3).toISOString();
+const soccerGame = (id, league, books) => ({
+  id, sport_key: league, commence_time: soon(), home_team: "Chelsea", away_team: "Arsenal",
+  bookmakers: Object.entries(books).map(([key, [h, d, a]]) => ({ key, markets: [{ key: "h2h", outcomes: [
+    { name: "Chelsea", price: h }, { name: "Draw", price: d }, { name: "Arsenal", price: a }].filter((o) => o.price) }] })),
+});
+
+test("soccer moneylines are 3-way: fair price, EV, odds screen order and labels", async () => {
+  const { findEv } = await import("../../web/js/engine/ev.js");
+  const { buildScreen } = await import("../../web/js/engine/screen.js");
+  const store = new Store();
+  store.saveFetch("soccer", [soccerGame("s1", "soccer_epl", {
+    pinnacle: [2.50, 3.40, 2.95], draftkings: [2.40, 3.75, 2.80], fanduel: [2.45, 3.30, 2.90],
+  })], { markets: ["h2h"], books: ["x"], feeds: SOCCER_LEAGUES });
+  const { events, prices } = store.snapshot("soccer");
+  const ev = findEv(events, prices, { bettable: new Set(["draftkings", "fanduel"]), reference: "pinnacle", minEv: 0, now: new Date() });
+  // Pinnacle's three prices de-vig to probabilities summing to 1; DK's 3.75 draw beats the fair ~3.53
+  const draw = ev.find((r) => r.book === "draftkings" && r.outcome === "Draw");
+  assert.ok(draw && draw.ev > 0.05, JSON.stringify(ev));
+  assert.equal(draw.selection, "Draw");
+  assert.equal(draw.event, "Chelsea vs Arsenal");
+  const [game] = buildScreen(events, prices, { market: "h2h", bettable: new Set(["draftkings", "fanduel"]), reference: "pinnacle",
+    method: "power", previous: new Map(), opening: new Map(), now: new Date() });
+  const rows = game.lines[0].rows;
+  assert.deepEqual(rows.map((r) => r.side), ["Chelsea", "Draw", "Arsenal"]);
+  assert.ok(Math.abs(rows.reduce((a, r) => a + 1 / r.fair.price, 0) - 1) < 1e-9);
+  assert.equal(game.name, "Chelsea vs Arsenal");
+});
+
+test("low hold needs every outcome of a 3-way market; quarter-line totals settle as split stakes", async () => {
+  const { findLowHold, findMiddles } = await import("../../web/js/engine/middles.js");
+  const store = new Store();
+  const g = soccerGame("s1", "soccer_epl", { draftkings: [2.6, 3.6, 3.1], fanduel: [2.5, 0, 3.3] });
+  g.bookmakers.push(
+    { key: "betmgm", markets: [{ key: "totals", outcomes: [{ name: "Over", price: 1.95, point: 2.25 }] }] },
+    { key: "espnbet", markets: [{ key: "totals", outcomes: [{ name: "Under", price: 1.95, point: 2.75 }] }] });
+  const g2 = soccerGame("s2", "soccer_epl", { draftkings: [2.6, 0, 3.1] }); // a book that only posted two of three
+  store.saveFetch("soccer", [g, g2], { markets: ["h2h", "totals"], books: ["x"], feeds: SOCCER_LEAGUES });
+  const { events, prices } = store.snapshot("soccer");
+  const bettable = new Set(["draftkings", "fanduel", "betmgm", "espnbet"]);
+  const lh = findLowHold(events, prices, { bettable, now: new Date() }).filter((r) => r.market === "h2h");
+  assert.equal(lh.length, 1); // s2's two-legged "market" isn't one
+  assert.deepEqual(lh[0].legs.map((l) => l.selection), ["Chelsea ML", "Draw", "Arsenal ML"]);
+  assert.ok(Math.abs(lh[0].hold - (1 / 2.6 + 1 / 3.6 + 1 / 3.3 - 1)) < 1e-12);
+  // Over 2.25 + Under 2.75 at 1.95, $100: 2 goals = Over half-push + Under win, 3 goals = Over win + Under half-push
+  const [mid] = findMiddles(events, prices, { bettable, now: new Date() });
+  assert.deepEqual(mid.hits.map((h) => [h.value, Math.round(h.profit * 100) / 100]), [[2, 22.5], [3, 22.5]]);
+  assert.ok(Math.abs(mid.miss_pct - -0.025) < 1e-12);
+});
+
+test("soccer pulls only the chosen leagues; the others keep their last pull", async () => {
+  const store = new Store();
+  let price = 2.5;
+  const client = {
+    oddsCalls: [],
+    async events(key) { return [{ id: `${key}-g`, commence_time: soon(), home_team: "Chelsea", away_team: "Arsenal" }]; },
+    async odds(key, markets) {
+      this.oddsCalls.push([key, markets]);
+      return { data: [soccerGame(`${key}-g`, key, { draftkings: [price, 3.4, 2.9] })], usage: usage(400, markets.length) };
+    },
+  };
+  let r = await refreshSport(store, client, "soccer", DEFAULT_BOOKS);
+  assert.equal(r.cost, 8); // h2h + totals in each of 4 leagues; no spreads for soccer
+  assert.deepEqual(client.oddsCalls.map(([, m]) => m), Array(4).fill(["h2h", "totals"]));
+  price = 2.2;
+  client.oddsCalls = [];
+  r = await refreshSport(store, client, "soccer", DEFAULT_BOOKS, ["h2h", "totals"], { leagues: ["soccer_epl"] });
+  assert.deepEqual(client.oddsCalls.map(([k]) => k), ["soccer_epl"]);
+  assert.equal(r.cost, 2);
+  const home = (league) => store.snapshot("soccer").prices.find((p) => p.event_id === `${league}-g` && p.outcome === "Chelsea").price;
+  assert.equal(home("soccer_epl"), 2.2); // fresh
+  assert.equal(home("soccer_spain_la_liga"), 2.5); // kept from the earlier pull
+  assert.equal(store.snapshot("soccer").events.size, 4);
+  assert.equal(store.previousPrices("soccer").get(JSON.stringify(["soccer_epl-g", "draftkings", "h2h", "Chelsea", ""])).price, 2.5);
+  await assert.rejects(refreshSport(store, client, "soccer", DEFAULT_BOOKS, ["h2h"], { leagues: [] }), /at least one league/);
+});
+
+test("soccer club names match ESPN's despite FC/1./05 noise and translations", async () => {
+  const { matchClub } = await import("../../web/js/engine/media.js");
+  const media = JSON.parse(readFileSync(new URL("../../web/data/media.json", import.meta.url)));
+  const clubs = media.sports.soccer.teams.map(([espn_id, display, location, nickname]) => ({ espn_id, display, location, nickname }));
+  const cases = {
+    "Bournemouth": "AFC Bournemouth", "Brighton and Hove Albion": "Brighton & Hove Albion", "1. FC Köln": "FC Cologne",
+    "FSV Mainz 05": "Mainz", "Athletic Bilbao": "Athletic Club", "Bodø/Glimt": "Bodo/Glimt", "Inter Milan": "Internazionale",
+    "Manchester City": "Manchester City", "Manchester United": "Manchester United", "Paris Saint Germain": "Paris Saint-Germain",
+    "Real Madrid": "Real Madrid", "Atlético Madrid": "Atlético Madrid", "Hamburger SV": "Hamburg SV",
+  };
+  for (const [odds, espn] of Object.entries(cases)) assert.equal(matchClub(odds, clubs)?.display, espn, odds);
+  assert.equal(matchClub("Madrid", clubs), null); // ambiguous: Real or Atlético
+});

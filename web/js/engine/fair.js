@@ -81,7 +81,7 @@ export function fairDetail(books, { method, reference, minBooks = 3, exclude = n
   const votes = new Map(); // source -> rows
   for (const r of rows) {
     if (skip && r.source === skip) { r.reason = r.book === exclude ? "the book being priced" : "same pricing engine as the book being priced"; continue; }
-    if (!r.two_sided) { r.reason = "only one side posted"; continue; }
+    if (!r.two_sided) { r.reason = outcomes.length > 2 ? "not every outcome posted" : "only one side posted"; continue; }
     if (!votes.has(r.source)) votes.set(r.source, []);
     votes.get(r.source).push(r);
   }

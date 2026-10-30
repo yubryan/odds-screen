@@ -3,8 +3,8 @@
 // api("/api/...") exactly as it did against the Python server.
 
 import {
-  DEFAULT_BOOKS, MAIN_MARKETS, PROP_MARKETS, REFERENCE_BOOK, SPORTS, BOOK_COLORS, BOOK_TITLES, SOURCE_TITLES,
-  bookTitle, isProp, marketTitle, propsCostPerEvent, refreshCost, withReference,
+  DEFAULT_BOOKS, LEAGUE_TITLES, MAIN_MARKETS, PROP_MARKETS, REFERENCE_BOOK, SPORTS, BOOK_COLORS, BOOK_TITLES, SOURCE_TITLES,
+  bookTitle, isProp, marketTitle, propsCostPerEvent, refreshCost, sportMarkets, withReference,
 } from "./engine/config.js";
 import { fairDetail } from "./engine/fair.js";
 import { groupPrices, isMoneyline, isSpread, lineKeyString } from "./engine/models.js";
@@ -69,10 +69,21 @@ export class LocalApi {
     return k;
   }
 
-  snapshot(sport, kind = "all") {
-    const { fetch, events, prices } = this.store.snapshot(this.sport(sport));
+  /** league: one feed of a multi-league sport (e.g. soccer_epl), or null for all of them. */
+  snapshot(sport, kind = "all", league = null) {
+    let { fetch, events, prices } = this.store.snapshot(this.sport(sport));
+    if (league) {
+      events = new Map([...events].filter(([, e]) => e.league === league));
+      prices = prices.filter((p) => events.has(p.event_id));
+    }
     const filtered = kind === "all" ? prices : prices.filter((p) => isProp(p.market) === (kind === "props"));
     return { fetch, events, prices: filtered, now: new Date() };
+  }
+
+  /** Tag rows with their game's league, for the league badge on multi-league sports. */
+  withLeague(rows, events) {
+    for (const r of rows) r.league = events.get(r.event_id ?? r.id)?.league ?? null;
+    return rows;
   }
 
   async guarded(fn) {
@@ -97,7 +108,8 @@ export class LocalApi {
     // ---- refreshes (the only routes that spend credits) ----
     if (method === "POST" && (m = p.match(/^\/api\/refresh\/(\w+)$/))) {
       const sport = this.sport(m[1]);
-      return this.guarded(() => refreshSport(this.store, this.client(), sport, this.books(), body?.markets ?? MAIN_MARKETS));
+      return this.guarded(() => refreshSport(this.store, this.client(), sport, this.books(), body?.markets ?? sportMarkets(sport),
+        { leagues: body?.leagues ?? null }));
     }
     if (method === "GET" && p === "/api/props/plan") {
       const sport = this.sport(q.sport);
@@ -113,7 +125,7 @@ export class LocalApi {
 
     // ---- tools (local snapshot only) ----
     if (method === "GET" && p === "/api/ev") {
-      const { fetch, events, prices, now } = this.snapshot(q.sport, this.kind(q.kind));
+      const { fetch, events, prices, now } = this.snapshot(q.sport, this.kind(q.kind), q.league || null);
       const rows = findEv(events, prices, {
         bettable: this.bettable(q.books), reference: REFERENCE_BOOK, method: this.method(q.method),
         minEv: num(q.min_ev, 0), minBooks: num(q.min_books, 3), kellyMult: num(q.kelly, 0.25), bankroll: num(q.bankroll, 1000), now,
@@ -127,20 +139,20 @@ export class LocalApi {
         r.open_point = o ? o.point ?? null : null;
         r.open_at = o ? o.fetched_at : null;
       }
-      return { fetch, has_data: prices.length > 0, rows };
+      return { fetch, has_data: prices.length > 0, rows: this.withLeague(rows, events) };
     }
     if (method === "GET" && p === "/api/screen") {
       const market = q.market ?? "spreads";
-      const { fetch, events, prices, now } = this.snapshot(q.sport);
+      const { fetch, events, prices, now } = this.snapshot(q.sport, "all", q.league || null);
       if (market === "props") {
         return { fetch, has_data: events.size > 0, events: propsSummary(events, prices, this.store.propsFetched(q.sport), { now }) };
       }
-      if (!MAIN_MARKETS.includes(market)) throw new ApiError(400, `market must be 'props' or one of ${MAIN_MARKETS}`);
+      if (!sportMarkets(q.sport).includes(market)) throw new ApiError(400, `market must be 'props' or one of ${sportMarkets(q.sport)}`);
       const rows = buildScreen(events, prices, {
         market, bettable: this.bettable(q.books), reference: REFERENCE_BOOK, method: this.method(q.method),
         previous: this.store.previousPrices(q.sport), opening: this.store.openingPrices([...events.keys()], [market]), now,
       });
-      return { fetch, has_data: rows.length > 0, events: rows };
+      return { fetch, has_data: rows.length > 0, events: this.withLeague(rows, events) };
     }
     if (method === "GET" && p === "/api/props-screen") {
       const { events, prices } = this.snapshot(q.sport, "props");
@@ -154,12 +166,13 @@ export class LocalApi {
       };
     }
     if (method === "GET" && p === "/api/middles") {
-      const { fetch, events, prices, now } = this.snapshot(q.sport, this.kind(q.kind));
-      return { fetch, has_data: prices.length > 0, rows: findMiddles(events, prices, { bettable: this.bettable(q.books), now, totalStake: num(q.stake, 100) }) };
+      const { fetch, events, prices, now } = this.snapshot(q.sport, this.kind(q.kind), q.league || null);
+      const rows = findMiddles(events, prices, { bettable: this.bettable(q.books), now, totalStake: num(q.stake, 100) });
+      return { fetch, has_data: prices.length > 0, rows: this.withLeague(rows, events) };
     }
     if (method === "GET" && p === "/api/lowhold") {
-      const { fetch, events, prices, now } = this.snapshot(q.sport, this.kind(q.kind));
-      return { fetch, has_data: prices.length > 0, rows: findLowHold(events, prices, { bettable: this.bettable(q.books), now }) };
+      const { fetch, events, prices, now } = this.snapshot(q.sport, this.kind(q.kind), q.league || null);
+      return { fetch, has_data: prices.length > 0, rows: this.withLeague(findLowHold(events, prices, { bettable: this.bettable(q.books), now }), events) };
     }
     if (method === "GET" && p === "/api/fair-detail") return this.fairDetail(q);
     if (method === "GET" && p === "/api/history") {
@@ -203,7 +216,7 @@ export class LocalApi {
       .map((g) => ({ line: g.key.line, point: sidePoint(g.key.line), books: [...g.books.keys()] }))
       .sort((a, b) => b.books.length - a.books.length);
     return {
-      event: { id: event.id, home: event.home, away: event.away, commence_time: event.commence_time.toISOString() },
+      event: { id: event.id, sport: event.sport, home: event.home, away: event.away, commence_time: event.commence_time.toISOString() },
       market: q.market, description: desc, outcome: q.outcome, point, line, exclude: q.exclude || null,
       mode: detail.mode, outcomes: detail.outcomes,
       books: detail.books.map((r) => ({
@@ -226,10 +239,14 @@ export class LocalApi {
           last_fetch: fetch?.fetched_at ?? null,
           last_props_fetch: props.length ? props.sort().at(-1) : null,
           events: fetch?.n_events ?? 0,
+          markets: sportMarkets(id).map((k) => ({ key: k, title: marketTitle(k) })),
+          // leagues you can choose between when pulling (soccer); NBA's preseason feed is automatic
+          leagues: s.pickLeagues ? s.keys.map((k) => ({ key: k, title: LEAGUE_TITLES[k] ?? k })) : [],
           prop_markets: PROP_MARKETS[id].map((k) => ({ key: k, title: marketTitle(k) })),
           props_cost_per_event: propsCostPerEvent(id, books),
           // upper bound: one bulk call per feed (e.g. NBA + preseason); empty feeds are skipped
-          refresh_cost: refreshCost(books) * s.keys.length,
+          feed_cost: refreshCost(books, sportMarkets(id)),
+          refresh_cost: refreshCost(books, sportMarkets(id)) * s.keys.length,
         };
       }),
       books: books.map((b) => ({ key: b, title: bookTitle(b), reference: b === REFERENCE_BOOK, color: BOOK_COLORS[b] ?? "#888" })),

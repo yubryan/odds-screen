@@ -6,7 +6,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from .config import book_title, is_preseason, is_prop, market_title
-from .models import Event, Price, group_prices, is_moneyline, is_spread, is_upcoming, selection_label
+from .models import Event, Price, group_prices, is_moneyline, is_spread, is_upcoming, selection_label, sides_for
 
 NFL_KEY_NUMBERS = {3, 7}
 
@@ -19,8 +19,17 @@ def _best_by_point(prices: list[Price]) -> dict[float, Price]:
     return best
 
 
-def _leg_return(stake: float, decimal: float, result: str) -> float:
-    return {"win": stake * decimal, "push": stake, "loss": 0.0}[result]
+def _is_quarter(point: float) -> bool:
+    return abs((point * 4) % 2) == 1
+
+
+def _leg_return(stake: float, decimal: float, result, point: float) -> float:
+    """What one leg pays back. result(point) settles it at a line; a quarter line
+    (Asian 2.25, -0.75) is half the stake on each neighbouring line."""
+    if _is_quarter(point):
+        return (_leg_return(stake / 2, decimal, result, point - 0.25)
+                + _leg_return(stake / 2, decimal, result, point + 0.25))
+    return {"win": stake * decimal, "push": stake, "loss": 0.0}[result(point)]
 
 
 def _spread_result(margin: int, point: float, is_home: bool) -> str:
@@ -36,25 +45,28 @@ def _total_result(total: int, point: float, is_over: bool) -> str:
 
 def _evaluate(event: Event, leg1: Price, leg2: Price, lo: float, hi: float, total_stake: float) -> dict | None:
     """leg1/leg2 sized for equal return if only one wins; scan every integer
-    outcome in [lo, hi] for ones that pay more than that."""
+    outcome in [lo, hi] (a quarter-goal wider) for ones that pay more than that."""
     d1, d2 = leg1.price, leg2.price
     s1 = total_stake * d2 / (d1 + d2)
     s2 = total_stake - s1
     miss = s1 * d1 - total_stake  # P&L when exactly one leg wins (usually negative)
 
     hits = []
-    for v in range(math.ceil(lo), math.floor(hi) + 1):
+    # a quarter line also pays partly on the whole number just outside it (Over 2.25 half-pushes on 2)
+    for v in range(math.ceil(lo - 0.25), math.floor(hi + 0.25) + 1):
         if is_spread(leg1.market):
-            r1 = _spread_result(v, leg1.point, leg1.outcome == event.home)
-            r2 = _spread_result(v, leg2.point, leg2.outcome == event.home)
+            r1 = lambda pt, v=v: _spread_result(v, pt, leg1.outcome == event.home)  # noqa: E731
+            r2 = lambda pt, v=v: _spread_result(v, pt, leg2.outcome == event.home)  # noqa: E731
             text = f"{event.home} by {v}" if v > 0 else f"{event.away} by {-v}" if v < 0 else "Tie"
         else:
-            r1 = _total_result(v, leg1.point, leg1.outcome == "Over")
-            r2 = _total_result(v, leg2.point, leg2.outcome == "Over")
+            r1 = lambda pt, v=v: _total_result(v, pt, leg1.outcome == "Over")  # noqa: E731
+            r2 = lambda pt, v=v: _total_result(v, pt, leg2.outcome == "Over")  # noqa: E731
             text = f"{leg1.description}: {v}" if leg1.description else f"Total {v}"
-        profit = _leg_return(s1, d1, r1) + _leg_return(s2, d2, r2) - total_stake
+        back1, back2 = _leg_return(s1, d1, r1, leg1.point), _leg_return(s2, d2, r2, leg2.point)
+        profit = back1 + back2 - total_stake
         if profit > miss + 1e-9:
-            kind = "both win" if r1 == r2 == "win" else "win + push"
+            won1, won2 = back1 >= s1 * d1 - 1e-9, back2 >= s2 * d2 - 1e-9
+            kind = "both win" if won1 and won2 else "win + push"
             hits.append({"value": v, "text": text, "kind": kind, "profit": profit})
     if not hits:
         return None
@@ -145,9 +157,12 @@ def find_low_hold(
             for outcome, p in outcomes.items():
                 if outcome not in best or p.price > best[outcome].price:
                     best[outcome] = p
-        if len(best) < 2:
+        # every outcome must be covered: two legs of a 3-way moneyline aren't a market
+        order = sides_for(key.market, event)
+        outcomes = set(order) | {o for m in books.values() for o in m}
+        if len(best) < len(outcomes):
             continue
-        legs = sorted(best.values(), key=lambda p: p.outcome != event.away and p.outcome != "Over")
+        legs = sorted(best.values(), key=lambda p: order.index(p.outcome) if p.outcome in order else len(order))
         hold = sum(1 / p.price for p in legs) - 1
         rows.append({
             "event_id": event.id,

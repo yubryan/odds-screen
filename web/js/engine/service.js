@@ -2,7 +2,7 @@
 // Main lines and props are separate refreshes so props (billed per game) never
 // ride along with a main-line pull.
 
-import { MAIN_MARKETS, PROP_MARKETS, SPORTS, isPreseason, refreshCost } from "./config.js";
+import { PROP_MARKETS, SPORTS, isPreseason, refreshCost, sportMarkets } from "./config.js";
 import { OddsAPIError } from "./oddsapi.js";
 import { parseTime } from "./models.js";
 
@@ -10,13 +10,14 @@ export class RefreshRefused extends Error {}
 
 const title = (sport) => SPORTS[sport].title;
 
-/** Upcoming games across all of a sport's feeds (e.g. NBA + NBA preseason),
- * from the free /events endpoint, soonest first. Each keeps its sport_key. */
-export async function upcomingEvents(client, sport) {
+/** Upcoming games across a sport's feeds (e.g. NBA + NBA preseason, or the
+ * chosen soccer leagues), from the free /events endpoint, soonest first.
+ * Each keeps its sport_key. */
+export async function upcomingEvents(client, sport, keys = null) {
   if (!(sport in SPORTS)) throw new RefreshRefused(`unknown sport '${sport}'`);
   const events = [];
   let offered = 0;
-  for (const key of SPORTS[sport].keys) {
+  for (const key of keys ?? SPORTS[sport].keys) {
     let batch;
     try {
       batch = await client.events(key);
@@ -43,11 +44,14 @@ function checkQuota(store, cost) {
 
 /** Main lines for one sport: one bulk call per feed that has upcoming games
  * (the free /events check means an empty feed, e.g. preseason once it ends,
- * never spends credits). All feeds land in a single snapshot. */
-export async function refreshSport(store, client, sport, books, markets = MAIN_MARKETS) {
-  markets = MAIN_MARKETS.filter((m) => markets.includes(m));
+ * never spends credits). All feeds land in a single snapshot. `leagues` limits
+ * a sport that lets you pick them (soccer); the others keep showing their last pull. */
+export async function refreshSport(store, client, sport, books, markets = sportMarkets(sport), { leagues = null } = {}) {
+  markets = sportMarkets(sport).filter((m) => markets.includes(m));
   if (!markets.length) throw new RefreshRefused("Pick at least one market to pull");
-  const feeds = [...new Set((await upcomingEvents(client, sport)).map((e) => e.sport_key))].sort();
+  const wanted = leagues && SPORTS[sport].pickLeagues ? SPORTS[sport].keys.filter((k) => leagues.includes(k)) : SPORTS[sport].keys;
+  if (!wanted.length) throw new RefreshRefused("Pick at least one league to pull");
+  const feeds = [...new Set((await upcomingEvents(client, sport, wanted)).map((e) => e.sport_key))].sort();
   if (!feeds.length) throw new RefreshRefused(`No upcoming ${title(sport)} games listed, so no credits were spent`);
   checkQuota(store, refreshCost(books, markets) * feeds.length);
 
@@ -60,8 +64,8 @@ export async function refreshSport(store, client, sport, books, markets = MAIN_M
     for (const e of res.data) payload.push({ ...e, sport_key: e.sport_key ?? key });
     cost += used.last ?? 0;
   }
-  const fetchId = store.saveFetch(sport, payload, { markets, books, usage: used, fetchedAt: now });
-  return { fetch_id: fetchId, events: payload.length, usage: used, cost, feeds, markets };
+  const fetchId = store.saveFetch(sport, payload, { markets, books, usage: used, fetchedAt: now, feeds: wanted });
+  return { fetch_id: fetchId, events: payload.length, usage: used, cost, feeds, markets, leagues: wanted };
 }
 
 /** What "refresh all props" would hit, and its worst-case cost. Free. */

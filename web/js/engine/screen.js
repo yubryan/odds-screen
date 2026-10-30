@@ -3,15 +3,12 @@
 
 import { PROP_MARKETS, isPreseason, isProp, marketTitle } from "./config.js";
 import { fairForLine } from "./fair.js";
-import { eventName, isMoneyline, isSpread, isUpcoming, isoformat, lineOf } from "./models.js";
+import { eventName, isSpread, isUpcoming, isoformat, lineOf, sidesFor } from "./models.js";
 import { priceKey } from "./store.js";
 
 const NO_LINE = Symbol("no line");
 
-export function sidesFor(market, event) {
-  if (isMoneyline(market) || isSpread(market)) return [event.away, event.home];
-  return ["Over", "Under"];
-}
+export { sidesFor };
 
 function sidePoint(market, line, side, event) {
   if (line == null) return null;

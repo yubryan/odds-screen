@@ -20,7 +20,15 @@ class Event:
 
     @property
     def name(self) -> str:
-        return f"{self.away} @ {self.home}"
+        """Soccer lists the home side first ("Chelsea vs Arsenal"); US sports "Away @ Home"."""
+        return f"{self.home} vs {self.away}" if home_first(self.sport) else f"{self.away} @ {self.home}"
+
+
+DRAW = "Draw"
+
+
+def home_first(sport: str) -> bool:
+    return sport == "soccer"
 
 
 @dataclass(frozen=True)
@@ -95,9 +103,18 @@ def selection_label(p: Price) -> str:
     if is_prop(p.market):
         return f"{p.description} {p.outcome} {fmt_point(p.point, False)} {market_title(p.market)}"
     if is_moneyline(p.market):
-        return f"{p.outcome} ML"
+        return DRAW if p.outcome == DRAW else f"{p.outcome} ML"
     return f"{p.outcome} {fmt_point(p.point, is_spread(p.market))}"
 
 
 def is_upcoming(event: Event, now: datetime) -> bool:
     return event.commence_time > now
+
+
+def sides_for(market: str, event: Event) -> list[str]:
+    """The outcomes of a market in display order: soccer moneylines are 3-way."""
+    if is_moneyline(market) and home_first(event.sport):
+        return [event.home, DRAW, event.away]
+    if is_moneyline(market) or is_spread(market):
+        return [event.away, event.home]
+    return ["Over", "Under"]

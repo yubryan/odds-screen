@@ -7,12 +7,24 @@ export const SPORTS = {
   nfl: { keys: ["americanfootball_nfl"], title: "NFL" },
   nba: { keys: ["basketball_nba", "basketball_nba_preseason"], title: "NBA" },
   ncaab: { keys: ["basketball_ncaab"], title: "NCAAB" },
+  // one tab, four leagues: each league is its own feed (billed separately) and
+  // can be left out of a pull; 3-way moneyline (home/draw/away) and totals only
+  soccer: {
+    keys: ["soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga", "soccer_uefa_champs_league"],
+    title: "Soccer", markets: ["h2h", "totals"], pickLeagues: true,
+  },
+};
+
+export const LEAGUE_TITLES = {
+  soccer_epl: "EPL", soccer_spain_la_liga: "La Liga", soccer_germany_bundesliga: "Bundesliga", soccer_uefa_champs_league: "UCL",
 };
 
 export const isPreseason = (league) => Boolean(league) && league.endsWith("_preseason");
 
 // Bulk-endpoint markets, fetched for a whole sport in one call.
 export const MAIN_MARKETS = ["h2h", "spreads", "totals"];
+/** The main markets a sport offers, in MAIN_MARKETS order. */
+export const sportMarkets = (sport) => SPORTS[sport]?.markets ?? MAIN_MARKETS;
 
 // Core over/under player props. Only available per event (events/{id}/odds),
 // billed per market actually returned.
@@ -21,6 +33,7 @@ export const PROP_MARKETS = {
   nfl: ["player_pass_yds", "player_rush_yds", "player_reception_yds", "player_receptions", "player_pass_tds"],
   nba: HOOPS_PROPS,
   ncaab: HOOPS_PROPS,
+  soccer: [],
 };
 
 export const MARKET_TITLES = {

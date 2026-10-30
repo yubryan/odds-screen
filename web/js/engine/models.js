@@ -6,7 +6,11 @@
 
 import { isProp, marketTitle } from "./config.js";
 
-export const eventName = (e) => `${e.away} @ ${e.home}`;
+/** Soccer lists the home side first ("Chelsea vs Arsenal"); US sports "Away @ Home". */
+export const homeFirst = (sport) => sport === "soccer";
+export const eventName = (e) => (homeFirst(e.sport) ? `${e.home} vs ${e.away}` : `${e.away} @ ${e.home}`);
+
+export const DRAW = "Draw";
 
 export const isSpread = (market) => market.includes("spreads");
 export const isMoneyline = (market) => market.startsWith("h2h");
@@ -63,8 +67,15 @@ export function fmtPoint(point, spread) {
 
 export function selectionLabel(p) {
   if (isProp(p.market)) return `${p.description} ${p.outcome} ${fmtPoint(p.point, false)} ${marketTitle(p.market)}`;
-  if (isMoneyline(p.market)) return `${p.outcome} ML`;
+  if (isMoneyline(p.market)) return p.outcome === DRAW ? DRAW : `${p.outcome} ML`;
   return `${p.outcome} ${fmtPoint(p.point, isSpread(p.market))}`;
+}
+
+/** The outcomes of a market in display order: soccer moneylines are 3-way. */
+export function sidesFor(market, event) {
+  if (isMoneyline(market) && homeFirst(event.sport)) return [event.home, DRAW, event.away];
+  if (isMoneyline(market) || isSpread(market)) return [event.away, event.home];
+  return ["Over", "Under"];
 }
 
 export const isUpcoming = (event, now) => event.commence_time > now;

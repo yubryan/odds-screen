@@ -2,7 +2,7 @@
 // Port of oddscreen/middles.py.
 
 import { bookTitle, isPreseason, isProp, marketTitle } from "./config.js";
-import { eventName, groupPrices, isMoneyline, isSpread, isUpcoming, isoformat, selectionLabel } from "./models.js";
+import { eventName, groupPrices, isMoneyline, isSpread, isUpcoming, isoformat, selectionLabel, sidesFor } from "./models.js";
 import { round2 } from "./odds_math.js";
 
 export const NFL_KEY_NUMBERS = new Set([3, 7]);
@@ -15,7 +15,16 @@ function bestByPoint(prices) {
   return best;
 }
 
-const legReturn = (stake, decimal, result) => ({ win: stake * decimal, push: stake, loss: 0.0 })[result];
+const isQuarter = (point) => Math.abs((point * 4) % 2) === 1;
+
+/** What one leg pays back. result(point) settles it at a line; a quarter line
+ * (Asian 2.25, -0.75) is half the stake on each neighbouring line. */
+function legReturn(stake, decimal, result, point) {
+  if (isQuarter(point)) {
+    return legReturn(stake / 2, decimal, result, point - 0.25) + legReturn(stake / 2, decimal, result, point + 0.25);
+  }
+  return { win: stake * decimal, push: stake, loss: 0.0 }[result(point)];
+}
 
 /** margin = home score - away score; point is from this side's perspective. */
 function spreadResult(margin, point, isHome) {
@@ -29,7 +38,7 @@ function totalResult(total, point, isOver) {
 }
 
 /** leg1/leg2 sized for equal return if only one wins; scan every integer
- * outcome in [lo, hi] for ones that pay more than that. */
+ * outcome in [lo, hi] (a quarter-goal wider) for ones that pay more than that. */
 function evaluate(event, leg1, leg2, lo, hi, totalStake) {
   const d1 = leg1.price, d2 = leg2.price;
   const s1 = (totalStake * d2) / (d1 + d2);
@@ -37,20 +46,23 @@ function evaluate(event, leg1, leg2, lo, hi, totalStake) {
   const miss = s1 * d1 - totalStake; // P&L when exactly one leg wins (usually negative)
 
   const hits = [];
-  for (let v = Math.ceil(lo); v <= Math.floor(hi); v++) {
+  // a quarter line also pays partly on the whole number just outside it (Over 2.25 half-pushes on 2)
+  for (let v = Math.ceil(lo - 0.25); v <= Math.floor(hi + 0.25); v++) {
     let r1, r2, text;
     if (isSpread(leg1.market)) {
-      r1 = spreadResult(v, leg1.point, leg1.outcome === event.home);
-      r2 = spreadResult(v, leg2.point, leg2.outcome === event.home);
+      r1 = (pt) => spreadResult(v, pt, leg1.outcome === event.home);
+      r2 = (pt) => spreadResult(v, pt, leg2.outcome === event.home);
       text = v > 0 ? `${event.home} by ${v}` : v < 0 ? `${event.away} by ${-v}` : "Tie";
     } else {
-      r1 = totalResult(v, leg1.point, leg1.outcome === "Over");
-      r2 = totalResult(v, leg2.point, leg2.outcome === "Over");
+      r1 = (pt) => totalResult(v, pt, leg1.outcome === "Over");
+      r2 = (pt) => totalResult(v, pt, leg2.outcome === "Over");
       text = leg1.description ? `${leg1.description}: ${v}` : `Total ${v}`;
     }
-    const profit = legReturn(s1, d1, r1) + legReturn(s2, d2, r2) - totalStake;
+    const back1 = legReturn(s1, d1, r1, leg1.point), back2 = legReturn(s2, d2, r2, leg2.point);
+    const profit = back1 + back2 - totalStake;
     if (profit > miss + 1e-9) {
-      hits.push({ value: v, text, kind: r1 === "win" && r2 === "win" ? "both win" : "win + push", profit });
+      const won = (back, s, d) => back >= s * d - 1e-9;
+      hits.push({ value: v, text, kind: won(back1, s1, d1) && won(back2, s2, d2) ? "both win" : "win + push", profit });
     }
   }
   if (!hits.length) return null;
@@ -138,9 +150,12 @@ export function findLowHold(events, prices, { bettable, now }) {
         if (!best.has(outcome) || p.price > best.get(outcome).price) best.set(outcome, p);
       }
     }
-    if (best.size < 2) continue;
-    const first = (p) => (p.outcome !== event.away && p.outcome !== "Over" ? 1 : 0);
-    const legs = [...best.values()].sort((a, b) => first(a) - first(b));
+    // every outcome must be covered: two legs of a 3-way moneyline aren't a market
+    const order = sidesFor(key.market, event);
+    const outcomes = new Set([...order, ...[...books.values()].flatMap((m) => [...m.keys()])]);
+    if (best.size < outcomes.size) continue;
+    const rank = (p) => (order.includes(p.outcome) ? order.indexOf(p.outcome) : order.length);
+    const legs = [...best.values()].sort((a, b) => rank(a) - rank(b));
     const hold = legs.reduce((s, p) => s + 1 / p.price, 0) - 1;
     rows.push({
       event_id: event.id,
