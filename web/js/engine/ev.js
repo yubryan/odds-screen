@@ -11,23 +11,28 @@ export const STALE_MINUTES = 30;
 
 export function findEv(events, prices, {
   bettable, reference, method = "power", minEv = 0.0, minBooks = 3, kellyMult = 0.25, bankroll = 1000.0, now, fairMode = "auto",
-  weighted = true, maxWidth = null,
+  weighted = true, maxWidth = null, stats = null,
 }) {
+  // stats (optional) counts why bettable quotes didn't make the list
+  const st = stats ?? {};
+  Object.assign(st, { checked: 0, started: 0, no_fair: 0, too_wide: 0, below_min: 0 });
+  const started = new Set();
   const rows = [];
   for (const { key, books } of groupPrices(events, prices).values()) {
     const event = events.get(key.event_id);
-    if (!isUpcoming(event, now)) continue;
+    if (!isUpcoming(event, now)) { started.add(event.id); st.started = started.size; continue; }
     const refPrices = books.get(reference) ?? new Map();
     for (const [book, outcomes] of books) {
       if (book === reference || !bettable.has(book)) continue;
       // each book is measured against a fair price it isn't part of
       const fair = fairForLine(books, { method, reference, minBooks, exclude: book, mode: fairMode, weighted });
-      if (!fair) continue;
-      if (maxWidth != null && fair.width != null && fair.width > maxWidth) continue; // priced off a market too wide to trust
+      st.checked += outcomes.size;
+      if (!fair) { st.no_fair += outcomes.size; continue; }
+      if (maxWidth != null && fair.width != null && fair.width > maxWidth) { st.too_wide += outcomes.size; continue; } // priced off a market too wide to trust
       for (const [outcome, p] of outcomes) {
         const prob = fair.probs.get(outcome);
         const ev = expectedValue(prob, p.price);
-        if (ev < minEv) continue;
+        if (ev < minEv) { st.below_min += 1; continue; }
         const kelly = kellyFraction(prob, p.price) * kellyMult;
         const ageMin = p.last_update && p.fetched_at
           ? (parseTime(p.fetched_at) - parseTime(p.last_update)) / 60000 : null;

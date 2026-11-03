@@ -28,11 +28,18 @@ def find_ev(
     fair_mode: str = "auto",
     weighted: bool = True,
     max_width: float | None = None,
+    stats: dict | None = None,
 ) -> list[dict]:
+    # stats (optional) counts why bettable quotes didn't make the list
+    st = stats if stats is not None else {}
+    st.update(checked=0, started=0, no_fair=0, too_wide=0, below_min=0)
+    started: set[str] = set()
     rows: list[dict] = []
     for key, books in group_prices(events, prices).items():
         event = events[key.event_id]
         if not is_upcoming(event, now):
+            started.add(event.id)
+            st["started"] = len(started)
             continue
         ref_prices = books.get(reference, {})
         for book, outcomes in books.items():
@@ -41,14 +48,18 @@ def find_ev(
             # each book is measured against a fair price it isn't part of
             fair = fair_for_line(books, method=method, reference=reference, min_books=min_books, exclude=book,
                                  mode=fair_mode, weighted=weighted)
+            st["checked"] += len(outcomes)
             if fair is None:
+                st["no_fair"] += len(outcomes)
                 continue
             if max_width is not None and fair.width is not None and fair.width > max_width:
+                st["too_wide"] += len(outcomes)
                 continue  # the fair price comes from a market too wide to trust
             for outcome, p in outcomes.items():
                 prob = fair.probs[outcome]
                 ev = expected_value(prob, p.price)
                 if ev < min_ev:
+                    st["below_min"] += 1
                     continue
                 kelly = kelly_fraction(prob, p.price) * kelly_mult
                 age_min = (

@@ -580,3 +580,9 @@ tr.fd-unused td { color: var(--text-3); }
 .fd-lines .chip { height: auto; padding: 6px 10px; white-space: normal; text-align: left; }
 .card.flash-card { animation: flashcard 2.4s ease-out; }
 @keyframes flashcard { 0%, 35% { box-shadow: 0 0 0 2px var(--accent); } 100% { box-shadow: none; } }
+
+/* a quote far from every other book: shown, but struck out and left out of the math */
+td.oc.outlier { color: var(--text-3, #999); }
+td.oc.outlier s { text-decoration-thickness: 1.5px; }
+.why-list { text-align: left; margin: 12px auto 0; padding-left: 18px; max-width: 560px; line-height: 1.5; }
+.why-list li { margin: 4px 0; }

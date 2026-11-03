@@ -358,3 +358,55 @@ test("soccer club names match ESPN's despite FC/1./05 noise and translations", a
   for (const [odds, espn] of Object.entries(cases)) assert.equal(matchClub(odds, clubs)?.display, espn, odds);
   assert.equal(matchClub("Madrid", clubs), null); // ambiguous: Real or Atlético
 });
+
+test("a quote far from every other book (NoVig Under -1000 vs ~-110) is left out; the reference book never is", async () => {
+  const { splitOutliers } = await import("../../web/js/engine/outliers.js");
+  const { LocalApi } = await import("../../web/js/router.js");
+  const store = new Store();
+  const when = new Date(Date.now() + 3 * 3600e3).toISOString();
+  const am = (a) => americanToDecimal(a);
+  const book = (key, o, u, pt = 220.5) => ({ key, markets: [{ key: "totals", outcomes: [
+    { name: "Over", price: am(o), point: pt }, { name: "Under", price: am(u), point: pt }] }] });
+  store.saveFetch("nba", [{ id: "e", commence_time: when, home_team: "H", away_team: "A", bookmakers: [
+    book("draftkings", -110, -110), book("fanduel", -105, -115), book("betmgm", -112, -108), book("novig", 105, -1000),
+  ] }, { id: "f", commence_time: when, home_team: "H2", away_team: "A2", bookmakers: [
+    book("pinnacle", -300, 240), book("draftkings", -110, -110), book("fanduel", -108, -112), // Pinnacle moved first: kept
+  ] }], { markets: ["totals"], books: ["x"] });
+  const { events, prices } = store.snapshot("nba");
+  const { kept, dropped } = splitOutliers(events, prices, { reference: "pinnacle" });
+  assert.deepEqual(dropped.map((p) => [p.book, p.outcome]), [["novig", "Under"]]);
+  assert.equal(kept.length, prices.length - 1);
+  // a normal disagreement stays: -150 against books near -110 is an opinion, not a broken quote
+  const opinion = prices.map((p) => (p.book === "novig" && p.outcome === "Under" ? { ...p, price: am(-150) } : p));
+  assert.equal(splitOutliers(events, opinion, { reference: "pinnacle" }).dropped.length, 0);
+
+  // with the bad quote in, NoVig's Over looks like +EV against a skewed market; with it out, it's judged normally
+  const api = new LocalApi({ store, media: null, settings: () => ({ apiKey: "k", books: ["draftkings", "fanduel", "betmgm", "novig"] }) });
+  const ev = await api.handle("GET", "/api/ev?sport=nba&min_ev=-1");
+  assert.ok(ev.rows.every((r) => !(r.book === "novig" && r.outcome === "Under")));
+  assert.equal(ev.diag.outliers, 1);
+  const screen = await api.handle("GET", "/api/screen?sport=nba&market=totals");
+  const under = screen.events.find((e) => e.id === "e").lines[0].rows.find((r) => r.side === "Under");
+  assert.equal(under.cells.novig, undefined);
+  assert.equal(Math.round(decimalToAmerican(under.outliers.novig.price)), -1000);
+  const fd = await api.handle("GET", "/api/fair-detail?sport=nba&event_id=e&market=totals&outcome=Under&point=220.5&mode=consensus");
+  assert.deepEqual(fd.left_out.map((x) => x.book), ["novig"]);
+  assert.ok(fd.books.every((b) => b.book !== "novig" || !b.used)); // one-sided now, so it can't vote
+});
+
+test("the +EV search reports why prices didn't make the list", async () => {
+  const { findEv } = await import("../../web/js/engine/ev.js");
+  const store = new Store();
+  const later = new Date(Date.now() + 3 * 3600e3).toISOString(), earlier = new Date(Date.now() - 3600e3).toISOString();
+  const bm = (key, o, u) => ({ key, markets: [{ key: "totals", outcomes: [{ name: "Over", price: o, point: 50.5 }, { name: "Under", price: u, point: 50.5 }] }] });
+  store.saveFetch("nfl", [
+    { id: "live", commence_time: earlier, home_team: "H", away_team: "A", bookmakers: [bm("pinnacle", 1.95, 1.95), bm("draftkings", 2.1, 1.8)] },
+    { id: "thin", commence_time: later, home_team: "H2", away_team: "A2", bookmakers: [bm("draftkings", 1.91, 1.91), bm("fanduel", 1.9, 1.92)] },
+    { id: "ok", commence_time: later, home_team: "H3", away_team: "A3", bookmakers: [bm("pinnacle", 1.95, 1.95), bm("draftkings", 1.9, 1.9)] },
+  ], { markets: ["totals"], books: ["x"] });
+  const { events, prices } = store.snapshot("nfl");
+  const stats = {};
+  const rows = findEv(events, prices, { bettable: new Set(["draftkings", "fanduel"]), reference: "pinnacle", now: new Date(), stats });
+  assert.equal(rows.length, 0);
+  assert.deepEqual(stats, { checked: 6, started: 1, no_fair: 4, too_wide: 0, below_min: 2 });
+});

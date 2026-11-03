@@ -7,7 +7,8 @@ import {
   bookTitle, isProp, marketTitle, propsCostPerEvent, refreshCost, sportMarkets, withReference,
 } from "./engine/config.js";
 import { fairDetail } from "./engine/fair.js";
-import { groupPrices, isMoneyline, isSpread, lineKeyString } from "./engine/models.js";
+import { groupPrices, isMoneyline, isSpread, isUpcoming, lineKeyString, lineOf } from "./engine/models.js";
+import { splitOutliers } from "./engine/outliers.js";
 import { findEv } from "./engine/ev.js";
 import { findLowHold, findMiddles } from "./engine/middles.js";
 import { DEVIG_METHODS, americanToDecimal } from "./engine/odds_math.js";
@@ -69,7 +70,9 @@ export class LocalApi {
     return k;
   }
 
-  /** league: one feed of a multi-league sport (e.g. soccer_epl), or null for all of them. */
+  /** league: one feed of a multi-league sport (e.g. soccer_epl), or null for all of them.
+   * Quotes far out of line with every other book (see outliers.js) are left out
+   * of `prices` and returned as `outliers`. */
   snapshot(sport, kind = "all", league = null) {
     let { fetch, events, prices } = this.store.snapshot(this.sport(sport));
     if (league) {
@@ -77,7 +80,25 @@ export class LocalApi {
       prices = prices.filter((p) => events.has(p.event_id));
     }
     const filtered = kind === "all" ? prices : prices.filter((p) => isProp(p.market) === (kind === "props"));
-    return { fetch, events, prices: filtered, now: new Date() };
+    const { kept, dropped } = splitOutliers(events, filtered, { reference: REFERENCE_BOOK });
+    return { fetch, events, prices: kept, outliers: dropped, now: new Date() };
+  }
+
+  /** Puts each left-out quote on its Odds Screen row (same game, market, player,
+   * line and side) as row.outliers[book], so the screen can show it struck out. */
+  markOutliers(lines, outliers, events, market, description = null) {
+    for (const l of lines) {
+      for (const row of l.rows) {
+        for (const p of outliers) {
+          if (p.market !== market || (p.description ?? null) !== description || p.outcome !== row.side) continue;
+          const ln = lineOf(p, events.get(p.event_id));
+          if (row._event === p.event_id && (ln === l.line || (ln == null && l.line == null))) {
+            (row.outliers ??= {})[p.book] = { price: p.price, point: p.point ?? null };
+          }
+        }
+        delete row._event;
+      }
+    }
   }
 
   /** Tag rows with their game's league, for the league badge on multi-league sports. */
@@ -125,11 +146,12 @@ export class LocalApi {
 
     // ---- tools (local snapshot only) ----
     if (method === "GET" && p === "/api/ev") {
-      const { fetch, events, prices, now } = this.snapshot(q.sport, this.kind(q.kind), q.league || null);
+      const { fetch, events, prices, outliers, now } = this.snapshot(q.sport, this.kind(q.kind), q.league || null);
+      const stats = {};
       const rows = findEv(events, prices, {
         bettable: this.bettable(q.books), reference: REFERENCE_BOOK, method: this.method(q.method),
         minEv: num(q.min_ev, 0), minBooks: num(q.min_books, 3), kellyMult: num(q.kelly, 0.25), bankroll: num(q.bankroll, 1000), now,
-        fairMode: this.fairMode(q.fair), weighted: q.weighted !== "0", maxWidth: q.max_width ? Number(q.max_width) : null,
+        fairMode: this.fairMode(q.fair), weighted: q.weighted !== "0", maxWidth: q.max_width ? Number(q.max_width) : null, stats,
       });
       // where this book's price for this exact bet opened (first price this device recorded)
       const opening = this.store.openingPrices([...new Set(rows.map((r) => r.event_id))], [...new Set(rows.map((r) => r.market))]);
@@ -139,11 +161,14 @@ export class LocalApi {
         r.open_point = o ? o.point ?? null : null;
         r.open_at = o ? o.fetched_at : null;
       }
-      return { fetch, has_data: prices.length > 0, rows: this.withLeague(rows, events) };
+      // why the list might be short: shown when it's empty
+      const upcoming = [...events.values()].filter((e) => isUpcoming(e, now)).length;
+      const diag = { ...stats, games: events.size, upcoming, outliers: outliers.length };
+      return { fetch, has_data: prices.length > 0, rows: this.withLeague(rows, events), diag };
     }
     if (method === "GET" && p === "/api/screen") {
       const market = q.market ?? "spreads";
-      const { fetch, events, prices, now } = this.snapshot(q.sport, "all", q.league || null);
+      const { fetch, events, prices, outliers, now } = this.snapshot(q.sport, "all", q.league || null);
       if (market === "props") {
         return { fetch, has_data: events.size > 0, events: propsSummary(events, prices, this.store.propsFetched(q.sport), { now }) };
       }
@@ -152,18 +177,28 @@ export class LocalApi {
         market, bettable: this.bettable(q.books), reference: REFERENCE_BOOK, method: this.method(q.method),
         previous: this.store.previousPrices(q.sport), opening: this.store.openingPrices([...events.keys()], [market]), now,
       });
+      for (const ev of rows) {
+        for (const l of ev.lines) for (const r of l.rows) r._event = ev.id;
+        this.markOutliers(ev.lines, outliers, events, market);
+      }
       return { fetch, has_data: rows.length > 0, events: this.withLeague(rows, events) };
     }
     if (method === "GET" && p === "/api/props-screen") {
-      const { events, prices } = this.snapshot(q.sport, "props");
+      const { events, prices, outliers } = this.snapshot(q.sport, "props");
       const event = events.get(q.event_id);
       if (!event) return { markets: [] };
-      return {
-        markets: buildPropScreen(event, prices.filter((x) => x.event_id === q.event_id), {
-          bettable: this.bettable(q.books), reference: REFERENCE_BOOK, method: this.method(q.method),
-          previous: this.store.previousPrices(q.sport), opening: this.store.openingPrices([q.event_id], PROP_MARKETS[q.sport]),
-        }),
-      };
+      const markets = buildPropScreen(event, prices.filter((x) => x.event_id === q.event_id), {
+        bettable: this.bettable(q.books), reference: REFERENCE_BOOK, method: this.method(q.method),
+        previous: this.store.previousPrices(q.sport), opening: this.store.openingPrices([q.event_id], PROP_MARKETS[q.sport]),
+      });
+      const mine = outliers.filter((x) => x.event_id === q.event_id);
+      for (const m of markets) {
+        for (const pl of m.players) {
+          for (const l of pl.lines) for (const r of l.rows) r._event = q.event_id;
+          this.markOutliers(pl.lines, mine, events, m.market, pl.player);
+        }
+      }
+      return { markets };
     }
     if (method === "GET" && p === "/api/middles") {
       const { fetch, events, prices, now } = this.snapshot(q.sport, this.kind(q.kind), q.league || null);
@@ -198,7 +233,7 @@ export class LocalApi {
 
   /** How one line's fair price was reached, book by book, plus the books that post other lines. */
   fairDetail(q) {
-    const { events, prices } = this.snapshot(q.sport);
+    const { events, prices, outliers } = this.snapshot(q.sport);
     const event = events.get(q.event_id);
     if (!event) throw new ApiError(404, "That game is no longer in the latest snapshot");
     const desc = q.description || null;
@@ -225,6 +260,9 @@ export class LocalApi {
       })),
       fair: detail.fair && { ...detail.fair, probs: Object.fromEntries(detail.fair.probs) },
       other_lines: others,
+      // quotes at this line left out for being far from every other book
+      left_out: outliers.filter((x) => x.event_id === q.event_id && x.market === q.market && (x.description ?? null) === desc
+        && Object.is(lineOf(x, event) ?? null, line ?? null)).map((x) => ({ book: x.book, title: bookTitle(x.book), outcome: x.outcome, price: x.price })),
     };
   }
 
@@ -262,7 +300,7 @@ export class LocalApi {
   snapshots(sports) {
     const out = new Map();
     for (const s of new Set(sports)) {
-      const { events, prices } = this.store.snapshot(this.sport(s));
+      const { events, prices } = this.snapshot(s);
       out.set(s, { events, prices });
     }
     return out;

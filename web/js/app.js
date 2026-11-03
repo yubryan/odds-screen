@@ -381,6 +381,7 @@ $("#theme").addEventListener("click", () => {
 // ---- refreshes ----------------------------------------------------------------
 
 async function afterRefresh() {
+  evGames = null; // a new pull brings new games; don't keep filtering to the old ones
   pruneHistory();
   meta = await api("/api/meta");
   await loadMedia();
@@ -727,7 +728,35 @@ function inWindow(r, key = state.evWindow) {
   const hours = (EV_WINDOWS.find(([k]) => k === key) ?? EV_WINDOWS[0])[2];
   return new Date(r.commence_time) - Date.now() <= hours * 3600e3;
 }
-const evFiltered = (rows) => rows.filter((r) => inWindow(r) && (!evGames || evGames.has(r.event_id)));
+const evFiltered = (rows) => {
+  // a game filter left over from an earlier pull (those games are gone) would hide everything
+  if (evGames && !rows.some((r) => evGames.has(r.event_id))) evGames = null;
+  return rows.filter((r) => inWindow(r) && (!evGames || evGames.has(r.event_id)));
+};
+
+/** Why the +EV list is empty, from the engine's counts of what it skipped. */
+function evWhyEmpty(d) {
+  if (!d) return "";
+  const n = (x, one, many = `${one}s`) => `${x} ${x === 1 ? one : many}`;
+  const out = [];
+  if (d.games && !d.upcoming) {
+    out.push(`All ${n(d.games, "game")} in the latest pull have already started. Live odds aren't used, so pull again closer to the next games.`);
+  } else if (d.started) {
+    out.push(`${n(d.started, "game")} in the pull already started and ${d.started === 1 ? "is" : "are"} skipped (live odds aren't used).`);
+  }
+  if (d.upcoming && !d.checked) {
+    out.push(state.books ? "None of the books ticked in the Books menu post these lines. Tick more books." : "No bettable book posts these lines yet.");
+  }
+  if (d.below_min) out.push(`${n(d.below_min, "price")} ${d.below_min === 1 ? "was" : "were"} worse than the fair price${state.minEv > 0 ? ` or under ${state.minEv}% EV` : ""}. That's normal: most book prices carry vig.`);
+  if (d.no_fair) {
+    out.push(`${n(d.no_fair, "price")} had no fair price to compare against: ${state.fairMode === "pinnacle"
+      ? "Pinnacle doesn't post those lines (try Auto)."
+      : `Pinnacle doesn't post the line and fewer than ${state.minBooks} independent books post every side of it (try lowering Consensus books).`}`);
+  }
+  if (d.too_wide) out.push(`${n(d.too_wide, "price")} came from a market wider than ${state.maxWidth}¢ and ${d.too_wide === 1 ? "was" : "were"} skipped (raise Max width, or clear it).`);
+  if (d.outliers) out.push(`${n(d.outliers, "quote")} far from every other book (e.g. a NoVig price at -1000 when others are near -110) ${d.outliers === 1 ? "was" : "were"} left out.`);
+  return out.length ? `<ul class="why-list">${out.map((x) => `<li>${x}</li>`).join("")}</ul>` : "";
+}
 
 /** Games in the EV list, soonest first, with how many bets each has in the current window. */
 function evGameList(rows) {
@@ -780,11 +809,15 @@ function renderEV(data) {
     const why = state.fairMode === "pinnacle" ? " using Pinnacle only. Try Auto or Consensus to price lines Pinnacle doesn't post."
       : state.fairMode === "consensus" ? " using the consensus. Try Auto or Pinnacle." : ". Lines move, so try again after a refresh.";
     return (data.has_data ? `<div class="ev-filters">${fairModeSeg()}</div>` : "") +
-      emptyState("No +EV bets right now", `Nothing at or above ${state.minEv}% EV in the latest snapshot${why}`);
+      emptyState("No +EV bets right now", `Nothing at or above ${state.minEv}% EV in the latest snapshot${why}${evWhyEmpty(data.diag)}`);
   }
   const bar = evFilterBar(data.rows);
   const rows = evFiltered(data.rows);
-  if (!rows.length) return bar + emptyState("No +EV bets match these filters", "Try a longer time window or pick more games.");
+  if (!rows.length) {
+    const later = data.rows.filter((r) => !inWindow(r)).length;
+    return bar + emptyState("No +EV bets match these filters", `${data.rows.length} +EV ${data.rows.length === 1 ? "bet is" : "bets are"} hidden by the filters above${
+      later ? `: ${later} ${later === 1 ? "is" : "are"} for games outside the ${(EV_WINDOWS.find(([k]) => k === state.evWindow) ?? EV_WINDOWS[0])[1]} window` : ""}. Tap All, or clear the games filter.`);
+  }
   const best = Math.max(...rows.map((r) => r.ev));
   const avg = rows.reduce((a, r) => a + r.ev, 0) / rows.length;
   const stake = rows.reduce((a, r) => a + r.stake, 0);
@@ -871,7 +904,7 @@ function otherLines(group, chosen) {
   }
   return (i, book) => by[i]?.get(book) ?? null;
 }
-const allCells = (group) => group.lines.flatMap((l) => l.rows.map((r) => r.cells));
+const allCells = (group) => group.lines.flatMap((l) => l.rows.map((r) => ({ ...r.outliers, ...r.cells })));
 
 // pick(row) -> {spec without point, info} makes each bettable cell selectable for the parlay slip.
 // others(rowIndex, book) names the line a book posts when it isn't at this one.
@@ -890,6 +923,10 @@ function oddsCells(rows, books, market, spread, pick = null, others = null, line
       : `<td class="oc open-col empty">–</td>`;
     const cells = books.map((b) => {
       const c = row.cells[b.key];
+      const off = !c && row.outliers?.[b.key];
+      if (off) {
+        return `<td class="oc outlier" title="${esc(b.title)} quoted ${esc(odds(off.price))}, far from every other book at this line (likely a thin or stale order), so it's left out of fair prices, best price, EV, middles and parlays."><span class="pt">${point(off.point, spread)}</span><s>${odds(off.price)}</s></td>`;
+      }
       if (!c) {
         const o = others?.(ri, b.key);
         if (!o) return `<td class="oc empty">–</td>`;
@@ -1922,7 +1959,9 @@ async function showFairDetail(spec) {
       <p class="foot-note">Different lines are different bets, so they never feed this fair price.</p>` : "";
   $("#modal-title").textContent = "How the fair price was calculated";
   $("#modal-body").onchange = null;
-  $("#modal-body").innerHTML = summary + table + lines +
+  const leftOut = d.left_out?.length ? `<p class="foot-note">Left out as far from every other book at this line: ${d.left_out.map((x) =>
+      `${esc(x.title)} ${esc(x.outcome)} ${odds(x.price)}`).join(", ")}. A quote that far off is usually a thin exchange order or a stale price.</p>` : "";
+  $("#modal-body").innerHTML = summary + table + leftOut + lines +
     `<div class="row-actions" style="margin-top:14px"><button class="btn btn-primary" data-goto-line='${JSON.stringify(lineValueFor(spec, home))}'>Open Odds Screen at this line</button></div>`;
   $("#modal-body").onclick = (e) => {
     const g = e.target.closest("[data-goto-line]");

@@ -17,6 +17,7 @@ from .models import Price
 from .odds_api import OddsAPIClient, OddsAPIError
 from .odds_math import DEVIG_METHODS, american_to_decimal
 from .parlay import LegSpec, ParlayError, analyze, generate, price_legs
+from .outliers import split_outliers
 from .screen import build_prop_screen, build_screen, props_summary
 from .service import RefreshRefused, props_plan, refresh_props, refresh_sport
 from .store import Store
@@ -61,8 +62,10 @@ def _of_kind(prices: list[Price], kind: Kind) -> list[Price]:
 
 
 def _snapshot(sport: str, kind: Kind = "all"):
+    """Quotes far out of line with every other book are left out (see outliers.py)."""
     fetch, events, prices = store.snapshot(_sport(sport))
-    return fetch, events, _of_kind(prices, kind), datetime.now(timezone.utc)
+    kept, _ = split_outliers(events, _of_kind(prices, kind), reference=config.REFERENCE_BOOK)
+    return fetch, events, kept, datetime.now(timezone.utc)
 
 
 def _guarded(fn, *args, **kwargs):
@@ -258,7 +261,7 @@ def _snapshots(sports: set[str]):
     out = {}
     for sport in sports:
         _, events, prices = store.snapshot(_sport(sport))
-        out[sport] = (events, prices)
+        out[sport] = (events, split_outliers(events, prices, reference=config.REFERENCE_BOOK)[0])
     return out
 
 
